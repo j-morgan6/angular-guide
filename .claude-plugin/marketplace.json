@@ -1,0 +1,15 @@
+{
+  "name": "angular-guide",
+  "owner": {
+    "name": "Joseph Morgan",
+    "url": "https://github.com/j-morgan6"
+  },
+  "plugins": [
+    {
+      "name": "angular-guide",
+      "source": "./",
+      "description": "Enforce modern Angular (v20+, signals-first, zoneless) with deterministic hooks. Complements Angular's official agent skills and MCP server.",
+      "version": "1.0.0"
+    }
+  ]
+}
