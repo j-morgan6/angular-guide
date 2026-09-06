@@ -55,6 +55,12 @@ else:
     if old and old in base:
         content = base.replace(old, new) if ti.get("replace_all") else base.replace(old, new, 1)
     elif new:
+        # old_string was not found on disk. Claude Code validates old_string
+        # against the real file before ever invoking Edit, so this path is
+        # defensive-only and should not be reachable in practice. Appending
+        # new_string (rather than silently linting only the unchanged base)
+        # is the safe default: it guarantees the substance of the edit is
+        # still covered by the checks below instead of being dropped.
         content = base + "\n" + new
     else:
         content = base
@@ -69,8 +75,13 @@ FILE_PATH=$(printf '%s\n' "$DATA" | sed -n '1p')
 CONTENT_PATH=$(printf '%s\n' "$DATA" | sed -n '2p')
 
 CODE_PATH=""
+# NEVER remove CODE_PATH if it turned out to alias FILE_PATH or CONTENT_PATH
+# (see the CODE_PATH assignment below) — deleting the user's real source file
+# would be catastrophic, so this guard is unconditional, not best-effort.
 cleanup() {
-  [ -n "${CODE_PATH:-}" ] && rm -f "$CODE_PATH"
+  if [ -n "${CODE_PATH:-}" ] && [ "$CODE_PATH" != "$FILE_PATH" ] && [ "$CODE_PATH" != "${CONTENT_PATH:-}" ]; then
+    rm -f "$CODE_PATH"
+  fi
   if [ "$MODE" = "pre" ] && [ -n "${CONTENT_PATH:-}" ] && [ "$CONTENT_PATH" != "$FILE_PATH" ]; then
     rm -f "$CONTENT_PATH"
   fi
@@ -119,14 +130,65 @@ FINDINGS=()
 add() { FINDINGS+=("$1"); }
 
 # Content with // and /* */ comments stripped, so rules never fire on prose.
-CODE_PATH=$(mktemp -t angular-guide-code) || CODE_PATH="$CONTENT_PATH"
-python3 -c '
-import re, sys
+# CODE_PATH must only ever be a path WE created via mktemp — never CONTENT_PATH
+# or FILE_PATH. If mktemp fails (e.g. a full or unwritable TMPDIR), we must
+# NOT fall back to writing into CONTENT_PATH: in post mode CONTENT_PATH IS
+# FILE_PATH (the user's real source file), so writing the stripped output
+# there would mangle it, and the cleanup trap would then delete it outright.
+# Instead, degrade to reading CONTENT_PATH unmodified — matching gets
+# slightly noisier (may fire on text inside comments) but the real file is
+# never opened for writing and never removed.
+CODE_TMP=$(mktemp -t angular-guide-code 2>/dev/null) || CODE_TMP=""
+if [ -n "$CODE_TMP" ]; then
+  CODE_PATH="$CODE_TMP"
+  python3 -c '
+import sys
+
+def strip_comments(src):
+    out = []
+    i, n = 0, len(src)
+    in_str = None   # None, or the quote character ("\x27", "\"", "`") we are inside
+    while i < n:
+        c = src[i]
+        nxt = src[i + 1] if i + 1 < n else ""
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(src[i + 1])
+                i += 2
+                continue
+            if c == in_str:
+                in_str = None
+            i += 1
+            continue
+        if c in ("\"", "\x27", "`"):
+            in_str = c
+            out.append(c)
+            i += 1
+            continue
+        if c == "/" and nxt == "/":
+            i += 2
+            while i < n and src[i] != "\n":
+                i += 1
+            continue
+        if c == "/" and nxt == "*":
+            i += 2
+            while i < n and not (src[i] == "*" and i + 1 < n and src[i + 1] == "/"):
+                if src[i] == "\n":
+                    out.append("\n")
+                i += 1
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
 src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
-src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
-src = re.sub(r"(^|[^:])//[^\n]*", r"\1", src)
-open(sys.argv[2], "w").write(src)
+open(sys.argv[2], "w").write(strip_comments(src))
 ' "$CONTENT_PATH" "$CODE_PATH" 2>/dev/null || cp "$CONTENT_PATH" "$CODE_PATH" 2>/dev/null
+else
+  CODE_PATH="$CONTENT_PATH"
+fi
 
 # ------------------------------------------------------------- pre: NG001-018
 

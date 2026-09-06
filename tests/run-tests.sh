@@ -338,6 +338,38 @@ check H9-stderr-only "findings on stderr, stdout empty" "$H9_OK"
 run "$(write_json "$WORK/src/app/d.ts" 'const company = "acme"; // takes any value')" bash "$HOOK_LINT" pre
 expect H10-comment-stripped 0 none ""
 
+# H11: a failing `mktemp` (e.g. full/unwritable TMPDIR) in post mode must never
+# mangle or delete the real source file. Shadow `mktemp` on PATH with a stub
+# that always fails, rather than relying on TMPDIR/permissions tricks that
+# some platforms' mktemp ignores for `-t`.
+FAKEBIN="$TMPROOT/fakebin"; mkdir -p "$FAKEBIN"
+cat > "$FAKEBIN/mktemp" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod +x "$FAKEBIN/mktemp"
+
+WORK11="$TMPROOT/hl11"; mkdir -p "$WORK11/src/app"
+cat > "$WORK11/src/app/e.ts" <<'EOF'
+export const x: any = 1;
+EOF
+ORIG_H11=$(cat "$WORK11/src/app/e.ts")
+run "$(write_json "$WORK11/src/app/e.ts" '')" env PATH="$FAKEBIN:$PATH" bash "$HOOK_LINT" post
+H11_OK=0
+[ "$CODE" = "0" ] || H11_OK=1
+[ -f "$WORK11/src/app/e.ts" ] || H11_OK=1
+[ "$(cat "$WORK11/src/app/e.ts" 2>/dev/null)" = "$ORIG_H11" ] || H11_OK=1
+check H11-mktemp-fail-preserves-file "post-mode mktemp failure must never mangle or delete the source file" "$H11_OK"
+
+# H12: a `//` inside a string literal is not a comment start — the violation
+# after it on the same line must still be caught.
+run "$(write_json "$WORK/src/app/a.ts" 'const label = "a // b"; const y: any = 1;')" bash "$HOOK_LINT" pre
+expect H12-string-slash-not-comment 2 err "NG007"
+
+# H13: a URL inside a string must not be mangled — code after it still lints.
+run "$(write_json "$WORK/src/app/a.ts" 'const url = "https://x"; const bad: any = 4;')" bash "$HOOK_LINT" pre
+expect H13-url-in-string-safe 2 err "NG007"
+
 ###############################################################################
 echo
 echo "Results: $PASS passed, $FAIL failed"
