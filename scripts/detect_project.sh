@@ -53,19 +53,61 @@ version_spec = deps.get("@angular/core") or deps.get("@angular/cli") or ""
 major = major_of(version_spec)
 version = str(version_spec).lstrip("^~>=< ") or "unknown"
 
+def version_from_package_lock(txt):
+    # npm lockfiles are JSON; parse structurally first, regex only as a fallback
+    # for a malformed/unusual file (fail open — never raise).
+    try:
+        data = json.loads(txt)
+    except Exception:
+        data = None
+    if isinstance(data, dict):
+        pkgs = data.get("packages")
+        if isinstance(pkgs, dict):
+            entry = pkgs.get("node_modules/@angular/core")
+            if isinstance(entry, dict) and entry.get("version"):
+                return str(entry["version"])
+        deps = data.get("dependencies")
+        if isinstance(deps, dict):
+            entry = deps.get("@angular/core")
+            if isinstance(entry, dict) and entry.get("version"):
+                return str(entry["version"])
+    m = re.search(r'"@angular/core"\s*:\s*\{[^}]*?"version"\s*:\s*"(\d+\.\d+\.\d+)"', txt, re.S)
+    return m.group(1) if m else None
+
+def version_from_yarn_lock(txt):
+    # classic yarn.lock: '"@angular/core@^22.0.0":\n  version "22.0.1"'
+    # yarn berry:        '"@angular/core@npm:^22.0.0":\n  version: 22.0.1'
+    m = re.search(
+        r'@angular/core@[^\n]*\n(?:[^\n]*\n){0,6}?\s*version:?\s*"?(\d+\.\d+\.\d+)"?',
+        txt,
+    )
+    return m.group(1) if m else None
+
+def version_from_inline_lock(txt):
+    # pnpm-lock.yaml / bun.lock embed the resolved version inline, e.g.
+    # "'@angular/core@22.0.1':" or "\"@angular/core@22.0.1\"".
+    m = re.search(r'@angular/core["\'@:\s/]+(\d+\.\d+\.\d+)', txt)
+    return m.group(1) if m else None
+
 if major is None:
-    for lf in ("package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock"):
+    lockfile_parsers = (
+        ("package-lock.json", version_from_package_lock),
+        ("pnpm-lock.yaml", version_from_inline_lock),
+        ("yarn.lock", version_from_yarn_lock),
+        ("bun.lock", version_from_inline_lock),
+    )
+    for lf, parser in lockfile_parsers:
         p = os.path.join(root, lf)
         if not os.path.exists(p):
             continue
         try:
             txt = open(p, encoding="utf-8", errors="ignore").read()
+            resolved = parser(txt)
         except Exception:
-            continue
-        m = re.search(r'@angular/core["\'@:\s/]+(\d+)\.\d+\.\d+', txt)
-        if m:
-            major = int(m.group(1))
-            version = m.group(0).split("core")[-1].strip("\"'@:/ ")
+            resolved = None
+        if resolved:
+            major = int(re.match(r"(\d+)", resolved).group(1))
+            version = resolved
             break
 
 known = major is not None
@@ -81,6 +123,7 @@ service_decorator_available = bool(known and major >= 22)
 
 # --- zoneless: explicit provider wins, else absence of the zone.js dependency
 zoneless = not dep("zone.js")
+_found_provider = False
 for dirpath, dirnames, filenames in os.walk(os.path.join(root, "src")):
     dirnames[:] = [d for d in dirnames if d != "node_modules"]
     for fn in filenames:
@@ -91,8 +134,12 @@ for dirpath, dirnames, filenames in os.walk(os.path.join(root, "src")):
                 os.path.join(dirpath, fn), encoding="utf-8", errors="ignore"
             ).read():
                 zoneless = True
+                _found_provider = True
+                break
         except Exception:
             pass
+    if _found_provider:
+        break
 
 test_runner = ("vitest" if dep("vitest")
                else "karma" if dep("karma")

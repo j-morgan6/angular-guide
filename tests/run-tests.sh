@@ -219,6 +219,64 @@ D10_OK=0
 printf '%s' "$OUT" | grep -q "Angular" || D10_OK=1
 check D10-announces "emits a summary on stdout" "$D10_OK"
 
+# D11: package.json range unresolvable, package-lock.json resolves the version
+WORK="$TMPROOT/d11"; ng_workspace "$WORK" "22.0.1"; cd "$WORK" || exit 1
+python3 -c '
+import json
+d = json.load(open("package.json"))
+d["dependencies"]["@angular/core"] = "latest"
+d["devDependencies"]["@angular/cli"] = "latest"
+json.dump(d, open("package.json", "w"))
+'
+python3 -c '
+import json
+json.dump(
+    {"name": "fixture", "lockfileVersion": 3,
+     "packages": {"": {}, "node_modules/@angular/core": {"version": "22.0.1"}}},
+    open("package-lock.json", "w"))
+'
+run "" bash "$DETECT"
+D11_OK=0
+grep -q '"angular_major": 22' .angular-guide-project.json 2>/dev/null || D11_OK=1
+grep -q '"onpush_default": true' .angular-guide-project.json 2>/dev/null || D11_OK=1
+check D11-package-lock-fallback "unresolvable package.json range, package-lock.json resolves version" "$D11_OK"
+
+# D12: package.json range unresolvable, yarn.lock resolves the version
+WORK="$TMPROOT/d12"; ng_workspace "$WORK" "22.0.1"; cd "$WORK" || exit 1
+python3 -c '
+import json
+d = json.load(open("package.json"))
+d["dependencies"]["@angular/core"] = "latest"
+d["devDependencies"]["@angular/cli"] = "latest"
+json.dump(d, open("package.json", "w"))
+'
+printf '%s\n' \
+  '"@angular/core@^22.0.0":' \
+  '  version "22.0.1"' \
+  '  resolved "https://registry.yarnpkg.com/@angular/core/-/core-22.0.1.tgz"' \
+  > yarn.lock
+run "" bash "$DETECT"
+D12_OK=0
+grep -q '"angular_major": 22' .angular-guide-project.json 2>/dev/null || D12_OK=1
+grep -q '"onpush_default": true' .angular-guide-project.json 2>/dev/null || D12_OK=1
+check D12-yarn-lock-fallback "unresolvable package.json range, yarn.lock resolves version" "$D12_OK"
+
+# D13: package.json range unresolvable, pnpm-lock.yaml resolves the version
+WORK="$TMPROOT/d13"; ng_workspace "$WORK" "22.0.1"; cd "$WORK" || exit 1
+python3 -c '
+import json
+d = json.load(open("package.json"))
+d["dependencies"]["@angular/core"] = "latest"
+d["devDependencies"]["@angular/cli"] = "latest"
+json.dump(d, open("package.json", "w"))
+'
+printf "packages:\n  '@angular/core@22.0.1':\n" > pnpm-lock.yaml
+run "" bash "$DETECT"
+D13_OK=0
+grep -q '"angular_major": 22' .angular-guide-project.json 2>/dev/null || D13_OK=1
+grep -q '"onpush_default": true' .angular-guide-project.json 2>/dev/null || D13_OK=1
+check D13-pnpm-lock-fallback "unresolvable package.json range, pnpm-lock.yaml resolves version" "$D13_OK"
+
 ###############################################################################
 echo
 echo "Results: $PASS passed, $FAIL failed"
