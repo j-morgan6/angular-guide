@@ -279,6 +279,67 @@ check D13-pnpm-lock-fallback "unresolvable package.json range, pnpm-lock.yaml re
 
 ###############################################################################
 echo
+echo "== hook-lint.sh pipeline =="
+###############################################################################
+
+WORK="$TMPROOT/hl"; ng_workspace "$WORK" "22.0.0"; cd "$WORK" || exit 1
+mkdir -p "$WORK/src/app"
+bash "$DETECT" >/dev/null 2>&1
+
+# H1: Write payload — violation in pending content is caught
+run "$(write_json "$WORK/src/app/a.ts" 'const x: any = 1;')" bash "$HOOK_LINT" pre
+expect H1-write-any 2 err "NG007"
+
+# H2: clean content passes silently
+run "$(write_json "$WORK/src/app/a.ts" 'const x: number = 1;')" bash "$HOOK_LINT" pre
+expect H2-clean-passes 0 none ""
+
+# H3: Edit — violation introduced ONLY by new_string is caught against on-disk context
+cat > "$WORK/src/app/b.ts" <<'EOF'
+export function f(input: string) {
+  return input.trim();
+}
+EOF
+run "$(edit_json "$WORK/src/app/b.ts" 'input: string' 'input: any')" bash "$HOOK_LINT" pre
+expect H3-edit-introduces 2 err "NG007"
+
+# H4: Edit that REMOVES the violation must not report it
+cat > "$WORK/src/app/c.ts" <<'EOF'
+export function g(input: any) {
+  return input;
+}
+EOF
+run "$(edit_json "$WORK/src/app/c.ts" 'input: any' 'input: unknown')" bash "$HOOK_LINT" pre
+expect H4-edit-removes 0 none ""
+
+# H5: non-Angular extension ignored
+run "$(write_json "$WORK/notes.md" 'const x: any = 1;')" bash "$HOOK_LINT" pre
+expect H5-ignores-md 0 none ""
+
+# H6: malformed stdin fails open
+run 'not json at all' bash "$HOOK_LINT" pre
+expect H6-malformed-json 0 none ""
+
+# H7: unknown mode fails open
+run "$(write_json "$WORK/src/app/a.ts" 'const x: any = 1;')" bash "$HOOK_LINT" bogus
+expect H7-unknown-mode 0 none ""
+
+# H8: missing file_path fails open
+run '{"tool_name":"Write","tool_input":{}}' bash "$HOOK_LINT" pre
+expect H8-no-filepath 0 none ""
+
+# H9: findings go to stderr, never stdout
+run "$(write_json "$WORK/src/app/a.ts" 'const x: any = 1;')" bash "$HOOK_LINT" pre
+H9_OK=0
+[ -z "$OUT" ] || H9_OK=1
+check H9-stderr-only "findings on stderr, stdout empty" "$H9_OK"
+
+# H10: comments are stripped before matching — no fire on prose
+run "$(write_json "$WORK/src/app/d.ts" 'const company = "acme"; // takes any value')" bash "$HOOK_LINT" pre
+expect H10-comment-stripped 0 none ""
+
+###############################################################################
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || { printf '  - %s\n' "${FAILED_NAMES[@]}"; exit 1; }
 exit 0
