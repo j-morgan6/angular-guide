@@ -372,6 +372,59 @@ expect H13-url-in-string-safe 2 err "NG007"
 
 ###############################################################################
 echo
+echo "== bash-guard.sh =="
+###############################################################################
+
+WORK="$TMPROOT/bg"; ng_workspace "$WORK" "22.0.0"; cd "$WORK" || exit 1
+touch pnpm-lock.yaml
+bash "$DETECT" >/dev/null 2>&1
+
+PUSH="git push"; FORCE="--force"; SHORTF="-f"
+
+run "$(bash_json "$PUSH $FORCE origin main")" bash "$BASH_GUARD"
+expect B1-force-push-main 2 err "BG001"
+
+run "$(bash_json "$PUSH $SHORTF origin master")" bash "$BASH_GUARD"
+expect B2-force-push-master 2 err "BG001"
+
+run "$(bash_json "$PUSH ${FORCE}-with-lease origin feature/x")" bash "$BASH_GUARD"
+expect B3-force-with-lease-ok 0 none ""
+
+run "$(bash_json "$PUSH origin main")" bash "$BASH_GUARD"
+expect B4-normal-push-ok 0 none ""
+
+run "$(bash_json 'ng build --prod')" bash "$BASH_GUARD"
+expect B5-ng-build-prod 2 err "BG002"
+
+run "$(bash_json 'ng build')" bash "$BASH_GUARD"
+expect B6-ng-build-ok 0 none ""
+
+run "$(bash_json 'npm install')" bash "$BASH_GUARD"
+expect B7-pm-mismatch 2 err "BG003"
+
+run "$(bash_json 'pnpm install')" bash "$BASH_GUARD"
+expect B8-pm-match-ok 0 none ""
+
+run "$(bash_json 'ng test')" bash "$BASH_GUARD"
+expect B9-ng-test-watch 2 err "BG004"
+
+run "$(bash_json 'ng test --watch=false')" bash "$BASH_GUARD"
+expect B10-ng-test-nowatch-ok 0 none ""
+
+run "$(bash_json 'rm -rf node_modules pnpm-lock.yaml')" bash "$BASH_GUARD"
+expect B11-nuke-lockfile 2 err "BG005"
+
+run "$(bash_json 'rm -rf node_modules')" bash "$BASH_GUARD"
+expect B12-rm-nodemodules-ok 0 none ""
+
+run "$(bash_json 'ng update @angular/core --force')" bash "$BASH_GUARD"
+expect B13-ng-update-force 2 err "BG006"
+
+run 'not json' bash "$BASH_GUARD"
+expect B14-malformed-fails-open 0 none ""
+
+###############################################################################
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || { printf '  - %s\n' "${FAILED_NAMES[@]}"; exit 1; }
 exit 0
