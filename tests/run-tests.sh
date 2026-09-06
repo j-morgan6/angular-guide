@@ -18,6 +18,9 @@ SUBAGENT="$ROOT/scripts/subagent-rules.sh"
 
 PASS=0
 FAIL=0
+CODE=""
+OUT=""
+ERR=""
 FAILED_NAMES=()
 
 # run <stdin-json> <cmd...>  — captures OUT, ERR, CODE
