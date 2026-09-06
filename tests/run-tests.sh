@@ -121,6 +121,106 @@ check M4-plugin-identity "name=angular-guide, MIT, keywords include angular" "$M
 
 ###############################################################################
 echo
+echo "== detect_project.sh =="
+###############################################################################
+
+# D1: v22 workspace — all v22 gates on
+WORK="$TMPROOT/d1"; ng_workspace "$WORK" "22.0.1"; cd "$WORK" || exit 1
+run "" bash "$DETECT"
+D1_OK=0
+grep -q '"angular_major": 22' .angular-guide-project.json 2>/dev/null || D1_OK=1
+grep -q '"onpush_default": true' .angular-guide-project.json 2>/dev/null || D1_OK=1
+grep -q '"signal_forms_available": true' .angular-guide-project.json 2>/dev/null || D1_OK=1
+grep -q '"service_decorator_available": true' .angular-guide-project.json 2>/dev/null || D1_OK=1
+grep -q '"standalone_default": true' .angular-guide-project.json 2>/dev/null || D1_OK=1
+check D1-v22-gates "v22 workspace sets all v22 gates true" "$D1_OK"
+
+# D2: v21 workspace — onpush/signal-forms/@Service OFF, standalone ON
+WORK="$TMPROOT/d2"; ng_workspace "$WORK" "21.2.0"; cd "$WORK" || exit 1
+run "" bash "$DETECT"
+D2_OK=0
+grep -q '"angular_major": 21' .angular-guide-project.json 2>/dev/null || D2_OK=1
+grep -q '"onpush_default": false' .angular-guide-project.json 2>/dev/null || D2_OK=1
+grep -q '"signal_forms_available": false' .angular-guide-project.json 2>/dev/null || D2_OK=1
+grep -q '"standalone_default": true' .angular-guide-project.json 2>/dev/null || D2_OK=1
+check D2-v21-gates "v21 leaves v22-only gates false, standalone true" "$D2_OK"
+
+# D3: v20 workspace
+WORK="$TMPROOT/d3"; ng_workspace "$WORK" "20.0.0"; cd "$WORK" || exit 1
+run "" bash "$DETECT"
+D3_OK=0
+grep -q '"angular_major": 20' .angular-guide-project.json 2>/dev/null || D3_OK=1
+grep -q '"standalone_default": true' .angular-guide-project.json 2>/dev/null || D3_OK=1
+check D3-v20-gates "v20 sets standalone_default true" "$D3_OK"
+
+# D4: not an Angular workspace — exit 0, no cache, no output
+WORK="$TMPROOT/d4"; mkdir -p "$WORK"; cd "$WORK" || exit 1
+run "" bash "$DETECT"
+D4_OK=0
+[ "$CODE" = "0" ] || D4_OK=1
+[ ! -f .angular-guide-project.json ] || D4_OK=1
+check D4-non-angular-inert "no angular.json → exit 0, no cache written" "$D4_OK"
+
+# D5: zone.js present → zoneless false; absent → zoneless true
+WORK="$TMPROOT/d5"; ng_workspace "$WORK" "22.0.0" '{"zone.js":"~0.15.0"}'; cd "$WORK" || exit 1
+run "" bash "$DETECT"
+D5_OK=0
+grep -q '"zoneless": false' .angular-guide-project.json 2>/dev/null || D5_OK=1
+check D5-zonejs-present "zone.js dependency → zoneless false" "$D5_OK"
+
+WORK="$TMPROOT/d5b"; ng_workspace "$WORK" "22.0.0"; cd "$WORK" || exit 1
+run "" bash "$DETECT"
+D5B_OK=0
+grep -q '"zoneless": true' .angular-guide-project.json 2>/dev/null || D5B_OK=1
+check D5b-zonejs-absent "no zone.js → zoneless true" "$D5B_OK"
+
+# D6: test runner detection
+WORK="$TMPROOT/d6"; ng_workspace "$WORK" "22.0.0" '{"vitest":"^3.0.0"}'; cd "$WORK" || exit 1
+run "" bash "$DETECT"
+D6_OK=0
+grep -q '"test_runner": "vitest"' .angular-guide-project.json 2>/dev/null || D6_OK=1
+check D6-vitest "vitest devDependency detected" "$D6_OK"
+
+WORK="$TMPROOT/d6b"; ng_workspace "$WORK" "21.0.0" '{"karma":"~6.4.0"}'; cd "$WORK" || exit 1
+run "" bash "$DETECT"
+D6B_OK=0
+grep -q '"test_runner": "karma"' .angular-guide-project.json 2>/dev/null || D6B_OK=1
+check D6b-karma "karma devDependency detected" "$D6B_OK"
+
+# D7: unknown version → gates must be false, never guessed
+WORK="$TMPROOT/d7"; mkdir -p "$WORK"; cd "$WORK" || exit 1
+printf '{"version":1,"projects":{}}\n' > angular.json
+printf '{"name":"x","dependencies":{}}\n' > package.json
+run "" bash "$DETECT"
+D7_OK=0
+grep -q '"angular_major": "unknown"' .angular-guide-project.json 2>/dev/null || D7_OK=1
+grep -q '"onpush_default": false' .angular-guide-project.json 2>/dev/null || D7_OK=1
+grep -q '"standalone_default": false' .angular-guide-project.json 2>/dev/null || D7_OK=1
+check D7-unknown-version "unknown version → every gate false, never guessed" "$D7_OK"
+
+# D8: package manager from lockfile
+WORK="$TMPROOT/d8"; ng_workspace "$WORK" "22.0.0"; cd "$WORK" || exit 1
+touch pnpm-lock.yaml
+run "" bash "$DETECT"
+D8_OK=0
+grep -q '"package_manager": "pnpm"' .angular-guide-project.json 2>/dev/null || D8_OK=1
+check D8-pnpm-lockfile "pnpm-lock.yaml → package_manager pnpm" "$D8_OK"
+
+# D9: detection runs from a nested subdirectory and finds the workspace root
+WORK="$TMPROOT/d9"; ng_workspace "$WORK" "22.0.0"
+mkdir -p "$WORK/src/app/feature"; cd "$WORK/src/app/feature" || exit 1
+run "" bash "$DETECT"
+D9_OK=0
+[ -f "$WORK/.angular-guide-project.json" ] || D9_OK=1
+check D9-walks-up "runs from nested dir, writes cache at workspace root" "$D9_OK"
+
+# D10: announces to stdout for session context
+D10_OK=0
+printf '%s' "$OUT" | grep -q "Angular" || D10_OK=1
+check D10-announces "emits a summary on stdout" "$D10_OK"
+
+###############################################################################
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || { printf '  - %s\n' "${FAILED_NAMES[@]}"; exit 1; }
 exit 0
