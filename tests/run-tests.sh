@@ -1197,6 +1197,29 @@ cd "$ROOT" || exit 1
 
 ###############################################################################
 echo
+echo "== I6: no profile at all => plugin inert; unknown-version profile => ungated rules still run =="
+###############################################################################
+
+# Branch 1: no cached profile anywhere -- NG007 has no version gate, so
+# without this fix it fired in ANY .ts file in ANY repository, including a
+# plain non-Angular one (e.g. a bare Express project).
+I6A="$TMPROOT/i6-noprofile"; mkdir -p "$I6A/src"
+run "$(write_json "$I6A/src/index.ts" 'const x: any = 1;')" bash "$HOOK_LINT" pre
+expect I6-no-profile-inert 0 none ""
+
+# Branch 2: a profile DOES exist (angular.json + package.json were found)
+# but angular_major is "unknown" -- this genuinely IS an Angular workspace,
+# just one whose version couldn't be resolved, so ungated rules like NG007
+# must still run (unchanged from before this fix).
+I6B="$TMPROOT/i6-unknown"; mkdir -p "$I6B/src"
+printf '{"version":1,"projects":{}}\n' > "$I6B/angular.json"
+printf '{"name":"x","dependencies":{}}\n' > "$I6B/package.json"
+(cd "$I6B" && bash "$DETECT" >/dev/null 2>&1)
+run "$(write_json "$I6B/src/index.ts" 'const x: any = 1;')" bash "$HOOK_LINT" pre
+expect I6-unknown-version-ungated-fires 2 err "NG007"
+
+###############################################################################
+echo
 echo "== C1: file_path newline injection (arbitrary file deletion) =="
 ###############################################################################
 

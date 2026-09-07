@@ -144,6 +144,21 @@ find_profile() {
 }
 PROFILE=$(find_profile 2>/dev/null || true)
 
+# I6: NG007/008/009/010/011/012/014/015 have no version gate, so without
+# this check they would fire in any .ts file in any repository at all — a
+# plain Express file in a non-Angular repo would get blocked. No cached
+# profile anywhere up the tree means detect_project.sh never found an
+# angular.json here, i.e. this is not an Angular workspace (or the plugin
+# is simply inert here), so the whole hook does nothing.
+#
+# A profile that DOES exist but reports angular_major "unknown" is a
+# different case: detect_project.sh found both angular.json and
+# package.json, so this genuinely IS an Angular workspace — the version
+# just couldn't be resolved. Ungated rules still apply there; only the
+# version-gated rules stay off, exactly as before (gate()/gate_eq() already
+# return false for an unresolved version, unchanged by this check).
+[ -n "${PROFILE:-}" ] && [ -f "$PROFILE" ] || exit 0
+
 # gate <boolean-key> — true only when the profile explicitly says true.
 # A missing profile or unknown version means the rule is SKIPPED, never guessed.
 gate() {
