@@ -198,6 +198,28 @@ if [ -n "$CODE_TMP" ]; then
   python3 -c '
 import sys
 
+def scan_delimited(src, i, opener_len, end_marker, out):
+    # Skip content starting right after the opener (src[i:i+opener_len]),
+    # looking for end_marker. If found, blank the content between (newlines
+    # preserved for line-accounting) and return the index just past
+    # end_marker. If end_marker is NEVER found anywhere in the rest of the
+    # source -- an unterminated /* or <!-- -- swallowing everything after it
+    # as "inside a comment" would silently disable every rule for the whole
+    # rest of the file, which is a much worse failure mode than the syntax
+    # error it reflects. So only the remainder of THIS LINE is treated as
+    # commented; the newline itself is left for the caller to append
+    # normally, and scanning resumes as usual from the next line.
+    n = len(src)
+    j = i + opener_len
+    close = src.find(end_marker, j)
+    if close != -1:
+        for k in range(j, close):
+            if src[k] == "\n":
+                out.append("\n")
+        return close + len(end_marker)
+    nl = src.find("\n", j)
+    return n if nl == -1 else nl
+
 def strip_comments(src, is_html):
     out = []
     i, n = 0, len(src)
@@ -216,12 +238,7 @@ def strip_comments(src, is_html):
             # at the top level, instead of leaving it intact just because
             # it is inside a string.
             if in_str == "`" and src[i:i + 4] == "<!--":
-                i += 4
-                while i < n and src[i:i + 3] != "-->":
-                    if src[i] == "\n":
-                        out.append("\n")
-                    i += 1
-                i += 3
+                i = scan_delimited(src, i, 4, "-->", out)
                 continue
             out.append(c)
             if c == "\\" and i + 1 < n:
@@ -233,12 +250,7 @@ def strip_comments(src, is_html):
             i += 1
             continue
         if src[i:i + 4] == "<!--":
-            i += 4
-            while i < n and src[i:i + 3] != "-->":
-                if src[i] == "\n":
-                    out.append("\n")
-                i += 1
-            i += 3
+            i = scan_delimited(src, i, 4, "-->", out)
             continue
         if is_html and c == "<":
             in_tag = True
@@ -278,12 +290,7 @@ def strip_comments(src, is_html):
                 i += 1
             continue
         if c == "/" and nxt == "*":
-            i += 2
-            while i < n and not (src[i] == "*" and i + 1 < n and src[i + 1] == "/"):
-                if src[i] == "\n":
-                    out.append("\n")
-                i += 1
-            i += 2
+            i = scan_delimited(src, i, 2, "*/", out)
             continue
         out.append(c)
         i += 1

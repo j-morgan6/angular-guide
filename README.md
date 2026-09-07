@@ -243,10 +243,10 @@ recall for being dependency-free and fast. Known false negatives:
   it genuinely can miss a `@Injectable({ providedIn: 'root' })` whose braces are split
   across lines in a way that puts `providedIn` on a different line than the pattern
   expects.
-- An **unterminated `<!--` or `/*`** in a source file causes the comment stripper to
-  swallow everything after it as "inside a comment," which can hide real violations
-  later in the same file (a false negative, not a false positive) — always a symptom of
-  already-broken source, but worth knowing about.
+- An **unterminated `<!--` or `/*`** in a source file only disables enforcement for the
+  rest of that one line — the comment stripper blanks the remainder of the line it opens
+  on and resumes normal scanning from the next line, rather than swallowing everything
+  after it as "inside a comment" for the whole file.
 - **BG001** recognizes only a bare `main`/`master` token as the default branch, on either
   side of a `src:dst` refspec or as the currently checked-out branch name. It does not
   resolve a fully-qualified ref like `refs/heads/main` to the same thing.

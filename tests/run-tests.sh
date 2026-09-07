@@ -1220,6 +1220,32 @@ expect I6-unknown-version-ungated-fires 2 err "NG007"
 
 ###############################################################################
 echo
+echo "== I7: unterminated /* or <!-- disables only that line, not the whole file =="
+###############################################################################
+
+cd "$V22" || exit 1
+
+# An unterminated /* used to swallow everything after it as "inside a
+# comment" -- a real violation on the very next line went completely
+# unenforced for the rest of the file.
+run "$(write_json "$V22/src/app/a.ts" $'/* TODO fix this later\nconst x: any = 1;\n')" bash "$HOOK_LINT" pre
+expect I7-unterminated-block-comment-still-catches-next-line 2 err "NG007"
+
+# Mirror case for HTML: an unterminated <!-- must not swallow a real
+# violation on a later line.
+run "$(write_json "$V22/src/app/a.html" $'<!-- unterminated comment\n<div *ngIf="ready">hi</div>\n')" bash "$HOOK_LINT" pre
+expect I7-unterminated-html-comment-still-catches-next-line 2 err "NG003"
+
+# A genuinely CLOSED /* */ spanning multiple lines must still fully blank
+# its content -- this fix must not turn a real multi-line comment into a
+# per-line one.
+run "$(write_json "$V22/src/app/a.ts" $'/*\nconst x: any = 1;\n*/\nconst y: number = 2;\n')" bash "$HOOK_LINT" pre
+expect I7-closed-multiline-comment-still-fully-blanked 0 none ""
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
 echo "== C1: file_path newline injection (arbitrary file deletion) =="
 ###############################################################################
 
