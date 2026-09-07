@@ -100,9 +100,9 @@ version-gated.
 | BG005 | `rm -r`/`-rf`/similar run together with a lockfile path (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`) in the same command. | Delete `node_modules` alone and reinstall; only remove the lockfile when deliberately re-resolving the whole dependency tree. | none |
 | BG006 | `ng update --force` | Resolve the reported incompatibilities, or update one package at a time — `--force` bypasses the peer-dependency and migration checks that make updating safe. | none |
 
-BG001 does not resolve a fully-qualified destination ref like `refs/heads/main` — only a
-bare `main`/`master` token is recognized on either side of a refspec or as the checked-out
-branch name.
+BG001 resolves a fully-qualified destination ref like `refs/heads/main` to the same target
+as a bare `main` — both as the destination side of a colon refspec (`HEAD:refs/heads/main`)
+and as a standalone ref token (`git push --force origin refs/heads/main`).
 
 ### NG001–NG018 — blocking checks (`PreToolUse` on `Write`/`Edit`, `hook-lint.sh pre`)
 
@@ -247,9 +247,5 @@ recall for being dependency-free and fast. Known false negatives:
   rest of that one line — the comment stripper blanks the remainder of the line it opens
   on and resumes normal scanning from the next line, rather than swallowing everything
   after it as "inside a comment" for the whole file.
-- **BG001** recognizes only a bare `main`/`master` token as the default branch, on either
-  side of a `src:dst` refspec or as the currently checked-out branch name. It does not
-  resolve a fully-qualified ref like `refs/heads/main` to the same thing.
-
 None of this is a substitute for code review. It catches the common, mechanically
 detectable cases; it will not catch every way to write pre-v20 Angular.

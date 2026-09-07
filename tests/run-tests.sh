@@ -1246,6 +1246,23 @@ cd "$ROOT" || exit 1
 
 ###############################################################################
 echo
+echo "== BG001: fully-qualified refs/heads/main destination is caught =="
+###############################################################################
+
+cd "$GITMAIN" || exit 1
+run "$(bash_json "$PUSH $FORCE origin HEAD:refs/heads/main")" bash "$BASH_GUARD"
+expect BG001-fully-qualified-colon-refspec-dst-blocks 2 err "BG001"
+
+run "$(bash_json "$PUSH $FORCE origin refs/heads/main")" bash "$BASH_GUARD"
+expect BG001-fully-qualified-standalone-ref-blocks 2 err "BG001"
+
+run "$(bash_json "$PUSH $FORCE origin HEAD:refs/heads/feature/x")" bash "$BASH_GUARD"
+expect BG001-fully-qualified-colon-refspec-dst-feature-ok 0 none ""
+
+cd "$WORK" || exit 1
+
+###############################################################################
+echo
 echo "== C1: file_path newline injection (arbitrary file deletion) =="
 ###############################################################################
 

@@ -71,13 +71,25 @@ if [ "$FORCE_PUSH" = "1" ]; then
         # A colon refspec is <src>:<dst> — what a force push actually
         # overwrites is the destination, not the source, so a source that
         # merely shares a name with the default branch (main:feature/x)
-        # must NOT be treated as targeting it.
+        # must NOT be treated as targeting it. Strip a leading refs/heads/
+        # from the destination before comparing, so a fully-qualified
+        # destination (HEAD:refs/heads/main) is recognized the same as a
+        # bare one (HEAD:main) — only a bare token was recognized before.
         dst="${tok#*:}"
+        dst="${dst#refs/heads/}"
         if [ "$dst" = "main" ] || [ "$dst" = "master" ]; then
           NAMES_DEFAULT_BRANCH=1
         fi
         ;;
-      *) POSITIONAL=$((POSITIONAL + 1)) ;;
+      *)
+        POSITIONAL=$((POSITIONAL + 1))
+        # A non-colon token that is itself a fully-qualified ref (rather
+        # than a colon src:dst pair) names its destination directly too,
+        # e.g. `git push --force origin refs/heads/main`.
+        case "$tok" in
+          refs/heads/main|refs/heads/master) NAMES_DEFAULT_BRANCH=1 ;;
+        esac
+        ;;
     esac
   done
   [ "$_PREV_NOGLOB" = "1" ] || set +f
