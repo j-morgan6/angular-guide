@@ -1,0 +1,62 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/detect_project.sh\" 2>/dev/null; exit 0",
+            "description": "Detect Angular workspace (version, zoneless, test runner, state lib) and cache the profile that gates every rule"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/bash-guard.sh\"",
+            "description": "BG001-BG006: force-push, removed ng flags, package-manager mismatch, hanging test runs, lockfile deletion"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-lint.sh\" pre",
+            "description": "NG001-NG018: blocking checks against the effective post-edit content (legacy Angular, reactivity misuse, security)"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-lint.sh\" post",
+            "description": "NG101-NG106: advisory checks — eager routes, legacy forms and DI idioms, image optimization, complexity"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/subagent-rules.sh\"",
+            "description": "Inject the condensed Angular rule set into every subagent, which inherits no skills"
+          }
+        ]
+      }
+    ]
+  }
+}

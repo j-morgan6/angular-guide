@@ -92,6 +92,11 @@ SUBAGENT="$ROOT/scripts/subagent-rules.sh"
 
 PASS=0
 FAIL=0
+# Initialized so a check() called before any run() (the manifest checks below
+# are) cannot trip `set -u` and abort the suite on its first failure.
+CODE=""
+OUT=""
+ERR=""
 FAILED_NAMES=()
 
 # run <stdin-json> <cmd...>  — captures OUT, ERR, CODE

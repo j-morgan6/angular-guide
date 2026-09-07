@@ -1,0 +1,13 @@
+{
+  "name": "angular-guide",
+  "version": "1.0.0",
+  "description": "Enforce modern Angular (v20+, signals-first, zoneless) with deterministic hooks. Complements Angular's official agent skills and MCP server.",
+  "author": {
+    "name": "Joseph Morgan",
+    "url": "https://github.com/j-morgan6"
+  },
+  "homepage": "https://github.com/j-morgan6/angular-guide",
+  "repository": "https://github.com/j-morgan6/angular-guide",
+  "license": "MIT",
+  "keywords": ["angular", "signals", "zoneless", "typescript", "best-practices"]
+}
