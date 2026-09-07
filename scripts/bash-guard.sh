@@ -107,7 +107,15 @@ if printf '%s' "$CMD" | grep -qE '(^|[[:space:]&|;])ng[[:space:]]+test([[:space:
 fi
 
 # BG005 — deleting node_modules together with the lockfile
-if printf '%s' "$CMD" | grep -qE "(^|[;&|])[[:space:]]*rm[[:space:]]+-[a-zA-Z]*r" \
+# Note the asymmetry with BG003's command-position anchor: `rm` is frequently
+# prefix-wrapped (sudo, time, xargs, ...), so a strict command-position anchor
+# would miss `sudo rm -rf ...` — the exact destructive invocation this rule
+# exists to catch. A left word-boundary (preceding char not alphanumeric)
+# rejects an `rm` embedded in a longer word (e.g. `confirm -rf ...`) without
+# losing wrapped invocations. Package manager names in BG003 don't have this
+# prefix-wrapping pattern, so the looser word-boundary test there would just
+# fire on prose instead — hence the different anchors for the two rules.
+if printf '%s' "$CMD" | grep -qE "(^|[^a-zA-Z0-9])rm[[:space:]]+-[a-zA-Z]*r" \
    && printf '%s' "$CMD" | grep -qE '(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lock)'; then
   add '🚫 BG005: Deleting the lockfile discards every pinned transitive version.
    💡 Fix: Delete node_modules alone and reinstall. Only remove the lockfile when deliberately re-resolving the whole dependency tree.'

@@ -466,6 +466,9 @@ expect B20-pm-mismatch-not-fooled-by-prose 0 none ""
 run "$(bash_json 'confirm -rf pnpm-lock.yaml')" bash "$BASH_GUARD"
 expect B21-rm-not-a-substring-of-another-word 0 none ""
 
+run "$(bash_json 'sudo rm -rf node_modules pnpm-lock.yaml')" bash "$BASH_GUARD"
+expect B22-sudo-rm-still-blocks 2 err "BG005"
+
 ###############################################################################
 echo
 echo "Results: $PASS passed, $FAIL failed"
