@@ -16,14 +16,14 @@ pressure. This skill is that decision, made once.
 
 ## RULES — Follow these with no exceptions
 
-1. **`httpResource()` for reads keyed on signals** — it tracks, cancels, and exposes loading and error state
+1. **`httpResource()` for reads keyed on signals** (v22+) — it tracks, cancels, and exposes loading and error state
 2. **`HttpClient` directly only for commands** — POST/PUT/DELETE, or one-shot calls
 3. **Never fetch in a component** (NG106)
 4. **Independent requests run in parallel** — never `await` them in sequence
 5. **Interceptors are functions**, registered via `withInterceptors([...])`
 6. **Handle errors at the boundary** — an interceptor for cross-cutting concerns, `.error()` for per-view state
 7. **Never subscribe to an HTTP call without teardown** (NG010)
-8. **`resource()` for non-HTTP async**, `rxResource()` when the source is an Observable
+8. **`resource()` for non-HTTP async**, `rxResource()` when the source is an Observable (both v22+)
 
 ## Choosing the right tool
 
@@ -32,8 +32,8 @@ pressure. This skill is that decision, made once.
 | Read, keyed on one or more signals (route param, filter, page) | `httpResource()` (v22+) |
 | Read, before v22 | `HttpClient` + `toSignal()` |
 | Write — POST / PUT / PATCH / DELETE, or any one-shot call | `HttpClient` directly |
-| Non-HTTP async source (file read, IndexedDB, a promise-returning SDK) | `resource()` |
-| Async source that is already an Observable you don't control | `rxResource()` |
+| Non-HTTP async source (file read, IndexedDB, a promise-returning SDK) | `resource()` (v22+) |
+| Async source that is already an Observable you don't control | `rxResource()` (v22+) |
 
 `httpResource()`, `resource()`, and `rxResource()` are stable as of Angular v22. Before
 v22, use `HttpClient` and convert with `toSignal()` — see `signals-essentials` rule 8 and
@@ -44,10 +44,10 @@ signal changed) was fixed in v22 — don't carry over workarounds for it from pr
 ## 1. `httpResource()` for signal-keyed reads
 
 ```typescript
-@Service()
+@Service() // v22+
 export class UserService {
   userResource(userId: () => string) {
-    return httpResource<User>(() => `/api/users/${userId()}`);
+    return httpResource<User>(() => `/api/users/${userId()}`); // v22+
   }
 }
 ```
@@ -75,7 +75,7 @@ export class UserService {
 A write has no ongoing state to track — it runs once and reports success or failure. Wrapping it in `httpResource()` buys nothing there; call `HttpClient` and handle the result at the call site.
 
 ```typescript
-@Service()
+@Service() // v22+
 export class OrderService {
   private readonly http = inject(HttpClient);
 
@@ -84,6 +84,9 @@ export class OrderService {
   }
 }
 ```
+
+Before v22, the same service is `@Injectable({ providedIn: 'root' })` — only the
+decorator changes; the command itself is identical either way.
 
 ## 3. Never fetch in a component (NG106)
 
@@ -183,20 +186,25 @@ owns its own lifecycle, and `toSignal()` unsubscribes on the consuming context's
 destruction. The risk is specifically a manual `.subscribe()` call. See `rxjs-interop`
 rule 2 for the full pattern.
 
-## 8. `resource()` for non-HTTP async, `rxResource()` for an existing Observable
+## 8. `resource()` for non-HTTP async, `rxResource()` for an existing Observable (v22+)
 
 `resource()` wraps any promise-returning loader — reading a file, querying IndexedDB,
 calling a third-party SDK that returns a promise. `rxResource()` is for the case where
 the async source is already an Observable you don't control (a websocket wrapper, a
 library that only exposes RxJS) and converting it to a promise first would be pointless
-indirection.
+indirection. Both are v22+.
 
 ```typescript
-readonly settingsResource = resource({
+readonly settingsResource = resource({ // v22+
   request: () => this.userId(),
   loader: ({ request }) => this.db.getSettings(request),
 });
 ```
+
+Before v22, wrap the promise-returning call in `from(...)` and convert with
+`toSignal()` — the same boundary-conversion pattern as `signals-essentials` rule 8. It
+loses `.isLoading()` and `.error()` as separate signals; that gap is exactly what
+`resource()` closes once v22 is available.
 
 ## Reference
 

@@ -30,9 +30,18 @@ ones, and role-suffixed filenames left over from a pre-v20 style guide.
 `UserProfile` the class becomes `user-profile.ts` the file — kebab-case, no exceptions
 for acronyms or multi-word type names.
 
-Bad: `userProfile.ts`, `UserProfile.ts`
+Bad:
 
-Good: `user-profile.ts`
+```
+userProfile.ts
+UserProfile.ts
+```
+
+Good:
+
+```
+user-profile.ts
+```
 
 ## 2. Name by intent, not role
 

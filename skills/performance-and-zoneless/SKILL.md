@@ -99,7 +99,27 @@ export class OrderStatusComponent {
 }
 ```
 
+On v22+, `resource()` is the built-in fix.
+
 Good:
+
+```typescript
+@Component({
+  selector: 'app-order-status',
+  template: `<p>Status: {{ status.value() }}</p>`,
+})
+export class OrderStatusComponent {
+  private readonly orders = inject(OrdersService);
+  readonly orderId = input.required<string>();
+  readonly status = resource({ // v22+
+    request: () => this.orderId(),
+    loader: ({ request }) => this.orders.watch(request),
+  });
+}
+```
+
+Before v22, the minimal fix is the same shape without `resource()` — a signal, written
+with `.set()` instead of a plain field reassignment:
 
 ```typescript
 @Component({
@@ -109,12 +129,18 @@ Good:
 export class OrderStatusComponent {
   private readonly orders = inject(OrdersService);
   readonly orderId = input.required<string>();
-  readonly status = resource({
-    request: () => this.orderId(),
-    loader: ({ request }) => this.orders.watch(request),
-  }).value;
+  readonly status = signal('pending');
+
+  constructor() {
+    this.orders.watch(this.orderId()).then((s) => this.status.set(s));
+  }
 }
 ```
+
+Both fixes turn on the same thing: writing to something Angular's reactive graph
+tracks, instead of a field it can't see. `resource()` additionally models loading and
+error state for you — the signal-only version doesn't, which is the gap `resource()`
+closes once v22 is available.
 
 Anywhere a callback — a timer, a WebSocket handler, a third-party SDK's completion
 callback — used to "just work" by way of zone.js noticing *something* happened, it now
