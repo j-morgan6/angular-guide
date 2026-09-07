@@ -900,11 +900,15 @@ post_file "$V22/src/app/a.html" '<img
   alt="Hero">'
 expect N104-multiline-ngsrc-ok 0 none ""
 
-# Pins the flattening boundary: [^>]* cannot cross a `>`, so collapsing two
-# adjacent, individually-clean tags onto one line must not manufacture a
-# match by bridging the end of one tag into the start of the next.
-post_file "$V22/src/app/a.html" '<img ngSrc="/a.png" width="1" height="1" alt="A"><img ngSrc="/b.png" width="1" height="1" alt="B">'
-expect N104-adjacent-tags-no-cross-match 0 none ""
+# Pins the flattening boundary: [^>]* cannot cross a `>`, so collapsing this
+# onto one line must not let the only <img> (ngSrc-only, no static src)
+# bridge past its own closing `>` into the ` src=` that belongs to the
+# unrelated <div> after it. A naive `.*` in place of `[^>]*` WOULD cross
+# that boundary and fire here -- see the relax-and-restore proof in the
+# task report -- which is what makes this assertion load-bearing.
+post_file "$V22/src/app/a.html" '<img ngSrc="/assets/hero.png" width="800" height="600" alt="Hero">
+<div class="caption" src="ignored"></div>'
+expect N104-no-cross-tag-match 0 none ""
 
 # NG105 direct DOM access in a component
 post_file "$V22/src/app/a.component.ts" 'export class A { init() { document.getElementById("x"); } }'
