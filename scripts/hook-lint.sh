@@ -508,6 +508,88 @@ check_ng018() {
   fi
 }
 
+# ------------------------------------------------------------ post: NG101-106
+
+check_ng101() {
+  [ "$EXT" = "ts" ] || return 0
+  printf '%s' "$FILE_PATH" | grep -qE 'routes?\.ts$|\.routes\.ts$|routing' || return 0
+  if grep -qE '\bcomponent:[[:space:]]*[A-Z]' "$CODE_PATH" 2>/dev/null; then
+    add '⚠️  NG101: Route declared with an eager `component:` reference.
+   💡 Fix: Lazy-load it so the feature leaves the initial bundle:
+     { path: "admin", loadComponent: () => import("./admin/admin-page").then((m) => m.AdminPage) }
+   Eager routes are defensible for a small shell route — for a feature screen they are almost always a mistake.
+   See: performance-and-zoneless skill'
+  fi
+}
+
+check_ng102() {
+  gate signal_forms_available || return 0
+  [ "$EXT" = "ts" ] || return 0
+  is_spec && return 0
+  if grep -qE '\bFormBuilder\b|\bnew[[:space:]]+FormGroup\b|\bfb\.group\(' "$CODE_PATH" 2>/dev/null; then
+    add '⚠️  NG102: Reactive Forms in a workspace where Signal Forms are stable.
+   💡 Fix: Prefer Signal Forms for new forms on v22+ — form state is signals, so it composes with computed() and needs no valueChanges subscription. Staying on Reactive Forms is correct when extending an existing Reactive Forms screen; starting a new one there is not.
+   See: angular-essentials skill'
+  fi
+}
+
+check_ng103() {
+  gate service_decorator_available || return 0
+  [ "$EXT" = "ts" ] || return 0
+  if grep -qE "@Injectable\([[:space:]]*\{[^}]*providedIn:[[:space:]]*['\"]root['\"]" "$CODE_PATH" 2>/dev/null; then
+    add '⚠️  NG103: `@Injectable({ providedIn: "root" })`.
+   💡 Fix: On v22+ use the `@Service` decorator — it is the same root-provided singleton with less ceremony:
+     @Service()
+     export class ItemStore {}
+   See: state-management skill'
+  fi
+}
+
+check_ng104() {
+  # [^>]* (not [^>]+): an <img> whose ONLY attribute is a literal src, e.g.
+  # `<img src="...">`, has no characters between the tag name and the space
+  # before `src=`. Requiring one or more there (`+`) makes the single most
+  # common case never match; `*` also matches when other attributes precede
+  # src (e.g. `<img class="hero" src="...">`).
+  if grep -qE '<img[^>]*[[:space:]]src=["'"'"']' "$CODE_PATH" 2>/dev/null; then
+    add '⚠️  NG104: Static `<img src>` without NgOptimizedImage.
+   💡 Fix: Import NgOptimizedImage and use `ngSrc` with explicit width/height (or `fill`):
+     <img ngSrc="/assets/hero.png" width="800" height="600" alt="Hero">
+   It adds lazy loading, srcset generation, and priority hints, and it prevents layout shift.
+   See: performance-and-zoneless skill'
+  fi
+}
+
+check_ng105() {
+  [ "$EXT" = "ts" ] || return 0
+  is_spec && return 0
+  # A file is a component when its path ends .component.ts, or when its
+  # comment-stripped content ($CODE_PATH, not the raw file) contains
+  # @Component -- so a commented-out decorator cannot trigger this rule.
+  printf '%s' "$FILE_PATH" | grep -qE '\.component\.ts$' || grep -q '@Component' "$CODE_PATH" 2>/dev/null || return 0
+  if grep -qE '\b(document|window)\.[a-zA-Z]' "$CODE_PATH" 2>/dev/null; then
+    add '⚠️  NG105: Direct `document` / `window` access in a component.
+   💡 Fix: Use `viewChild()` signal queries for element access, `afterRenderEffect()` for DOM work that must run post-render, and inject `DOCUMENT` rather than reaching for the global. Direct globals break SSR, where neither exists.
+   See: component-architecture skill'
+  fi
+}
+
+check_ng106() {
+  [ "$EXT" = "ts" ] || return 0
+  is_spec && return 0
+  local out
+  out=$(bash "$(dirname "$0")/analyze_quality.sh" "$CONTENT_PATH" 2>/dev/null)
+  # analyze_quality.sh inspects content; component-ness is decided by the real
+  # filename, so re-check it here rather than trusting the temp file's name.
+  printf '%s' "$FILE_PATH" | grep -qE '\.component\.ts$' || \
+    grep -q '@Component' "$CODE_PATH" 2>/dev/null || return 0
+  if [ -n "$out" ]; then
+    add "⚠️  NG106: Component complexity.
+   $out
+   See: component-architecture skill"
+  fi
+}
+
 # -------------------------------------------------------------------- driver
 
 if [ "$MODE" = "pre" ]; then
@@ -530,7 +612,12 @@ if [ "$MODE" = "pre" ]; then
   check_ng017
   check_ng018
 else
-  :
+  check_ng101
+  check_ng102
+  check_ng103
+  check_ng104
+  check_ng105
+  check_ng106
 fi
 
 if [ ${#FINDINGS[@]} -gt 0 ]; then

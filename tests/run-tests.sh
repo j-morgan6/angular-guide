@@ -837,6 +837,84 @@ cd "$V22" || exit 1
 
 ###############################################################################
 echo
+echo "== NG101-NG106 (advisory, post mode) =="
+###############################################################################
+
+cd "$V22" || exit 1
+mkdir -p "$V22/src/app"
+
+post_file() { # <path> <content> — write to disk, then lint in post mode
+  printf '%s' "$2" > "$1"
+  run "$(write_json "$1" "$2")" bash "$HOOK_LINT" post
+}
+
+# NG101 eager feature route
+post_file "$V22/src/app/app.routes.ts" 'export const routes: Routes = [
+  { path: "admin", component: AdminPageComponent },
+];'
+expect N101-eager-route 2 err "NG101"
+
+post_file "$V22/src/app/app.routes.ts" 'export const routes: Routes = [
+  { path: "admin", loadComponent: () => import("./admin/admin-page").then((m) => m.AdminPage) },
+];'
+expect N101-lazy-ok 0 none ""
+
+# NG102 FormBuilder where Signal Forms are available
+post_file "$V22/src/app/f.ts" 'export class F { form = this.fb.group({ name: [""] }); }'
+expect N102-formbuilder 2 err "NG102"
+
+# ...silent on v21, where Signal Forms are not stable
+cd "$V21" || exit 1; mkdir -p "$V21/src/app"
+post_file "$V21/src/app/f.ts" 'export class F { form = this.fb.group({ name: [""] }); }'
+expect N102-silent-on-v21 0 none ""
+cd "$V22" || exit 1
+
+# NG103 providedIn root where @Service exists
+post_file "$V22/src/app/s.ts" '@Injectable({ providedIn: "root" })
+export class S {}'
+expect N103-providedin 2 err "NG103"
+
+# NG104 static img without ngSrc
+post_file "$V22/src/app/a.html" '<img src="/assets/hero.png" alt="Hero">'
+expect N104-plain-img 2 err "NG104"
+
+post_file "$V22/src/app/a.html" '<img ngSrc="/assets/hero.png" width="800" height="600" alt="Hero">'
+expect N104-ngsrc-ok 0 none ""
+
+# A data-bound src is not a static image
+post_file "$V22/src/app/a.html" '<img [src]="avatarUrl()" alt="Avatar">'
+expect N104-bound-src-ok 0 none ""
+
+# NG105 direct DOM access in a component
+post_file "$V22/src/app/a.component.ts" 'export class A { init() { document.getElementById("x"); } }'
+expect N105-document-access 2 err "NG105"
+
+# NG106 HTTP call inside a component
+post_file "$V22/src/app/b.component.ts" 'export class B {
+  private http = inject(HttpClient);
+  load() { return this.http.get("/api/items"); }
+}'
+expect N106-http-in-component 2 err "NG106"
+
+# A service making HTTP calls is correct
+post_file "$V22/src/app/b.service.ts" 'export class BService {
+  private http = inject(HttpClient);
+  load() { return this.http.get("/api/items"); }
+}'
+expect N106-http-in-service-ok 0 none ""
+
+# analyze_quality.sh runs standalone and always exits 0
+QA="$ROOT/scripts/analyze_quality.sh"
+run "" bash "$QA" "$V22/src/app/b.component.ts"
+Q1_OK=0; [ "$CODE" = "0" ] || Q1_OK=1
+check Q1-analyze-exit0 "analyze_quality.sh exits 0" "$Q1_OK"
+
+run "" bash "$QA" /nonexistent/path.ts
+Q2_OK=0; [ "$CODE" = "0" ] || Q2_OK=1
+check Q2-analyze-missing-file "analyze_quality.sh fails open on a missing file" "$Q2_OK"
+
+###############################################################################
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || { printf '  - %s\n' "${FAILED_NAMES[@]}"; exit 1; }
 exit 0
