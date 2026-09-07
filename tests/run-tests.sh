@@ -469,6 +469,37 @@ expect B21-rm-not-a-substring-of-another-word 0 none ""
 run "$(bash_json 'sudo rm -rf node_modules pnpm-lock.yaml')" bash "$BASH_GUARD"
 expect B22-sudo-rm-still-blocks 2 err "BG005"
 
+# Finding 1 (round 3 review): a bare "*" among the push arguments must not
+# glob-expand against this script's own cwd during tokenization — that would
+# inflate the positional-word count and defeat the "no refspec named"
+# inference. Create real files so the fixture doesn't depend on what happens
+# to already be lying around in the directory.
+cd "$GITMAIN" || exit 1
+touch fileA fileB fileC
+run "$(bash_json "$PUSH $FORCE *")" bash "$BASH_GUARD"
+expect B23-glob-star-not-expanded-still-blocks 2 err "BG001"
+rm -f fileA fileB fileC
+
+# Finding 2 (round 3 review): colon refspecs — the destination side (after
+# the colon) governs, not the source side.
+cd "$GITMAIN" || exit 1
+run "$(bash_json "$PUSH $FORCE origin HEAD:main")" bash "$BASH_GUARD"
+expect B24-colon-refspec-dst-main-blocks 2 err "BG001"
+
+run "$(bash_json "$PUSH $FORCE origin main:feature/x")" bash "$BASH_GUARD"
+expect B25-colon-refspec-src-main-dst-feature-ok 0 none ""
+
+# Finding 3 (round 3 review): detached HEAD, as a real fixture rather than an
+# argument — no checked-out branch to infer, so an unqualified force push
+# must fail open.
+GITDETACHED="$TMPROOT/bg-git-detached"; mkdir -p "$GITDETACHED"
+( cd "$GITDETACHED" && git init -q -b main . \
+    && git -c user.email=a@a -c user.name=a commit -q --allow-empty -m init \
+    && git checkout -q --detach ) >/dev/null 2>&1
+cd "$GITDETACHED" || exit 1
+run "$(bash_json "$PUSH $FORCE")" bash "$BASH_GUARD"
+expect B26-unqualified-force-ok-detached-head 0 none ""
+
 ###############################################################################
 echo
 echo "Results: $PASS passed, $FAIL failed"

@@ -49,27 +49,48 @@ if [ "$FORCE_PUSH" = "1" ]; then
   NAMES_DEFAULT_BRANCH=0
   if printf '%s' "$CMD" | grep -qE '(^|[[:space:]])(main|master)([[:space:]]|$)'; then
     NAMES_DEFAULT_BRANCH=1
-  else
-    # No literal "main"/"master" in the command. `git push --force` and
-    # `git push --force <remote>` (no refspec) push whatever branch is
-    # currently checked out — count the non-flag words after "push": zero
-    # (no remote) or one (remote only) means no branch was named, so fall
-    # back to the checked-out branch. Two or more means a refspec was given
-    # explicitly (e.g. `origin feature/x`) and that name — not the current
-    # branch — is what matters, so we do NOT infer in that case.
-    PUSH_ARGS=$(printf '%s' "$CMD" | sed -E 's/^.*git[[:space:]]+push//')
-    POSITIONAL=0
-    for tok in $PUSH_ARGS; do
-      case "$tok" in
-        -*) ;;
-        *) POSITIONAL=$((POSITIONAL + 1)) ;;
-      esac
-    done
-    if [ "$POSITIONAL" -le 1 ]; then
-      CURRENT_BRANCH=$(git symbolic-ref --short -q HEAD 2>/dev/null || true)
-      if [ "$CURRENT_BRANCH" = "main" ] || [ "$CURRENT_BRANCH" = "master" ]; then
-        NAMES_DEFAULT_BRANCH=1
-      fi
+  fi
+
+  # Tokenize the arguments after "push" — needed both to check refspec
+  # destinations (below) and, if nothing named the default branch yet, to
+  # tell whether any branch was named at all. Disable pathname expansion
+  # first and restore whatever it was before: an unquoted `for tok in
+  # $PUSH_ARGS` would otherwise glob-expand a bare `*` (or any other
+  # metacharacter) in the analyzed command text against THIS script's cwd,
+  # inflating the word count and defeating the "no refspec named" inference
+  # below — the guard must not be foolable by its own tokenizer.
+  PUSH_ARGS=$(printf '%s' "$CMD" | sed -E 's/^.*git[[:space:]]+push//')
+  case $- in *f*) _PREV_NOGLOB=1 ;; *) _PREV_NOGLOB=0 ;; esac
+  set -f
+  POSITIONAL=0
+  for tok in $PUSH_ARGS; do
+    case "$tok" in
+      -*) ;;
+      *:*)
+        POSITIONAL=$((POSITIONAL + 1))
+        # A colon refspec is <src>:<dst> — what a force push actually
+        # overwrites is the destination, not the source, so a source that
+        # merely shares a name with the default branch (main:feature/x)
+        # must NOT be treated as targeting it.
+        dst="${tok#*:}"
+        if [ "$dst" = "main" ] || [ "$dst" = "master" ]; then
+          NAMES_DEFAULT_BRANCH=1
+        fi
+        ;;
+      *) POSITIONAL=$((POSITIONAL + 1)) ;;
+    esac
+  done
+  [ "$_PREV_NOGLOB" = "1" ] || set +f
+
+  if [ "$NAMES_DEFAULT_BRANCH" != "1" ] && [ "$POSITIONAL" -le 1 ]; then
+    # Zero non-flag words (no remote) or one (remote only, no refspec) means
+    # no branch was named, so the push targets whatever branch is currently
+    # checked out. Fails open: a detached HEAD or a non-repo directory makes
+    # `git symbolic-ref` fail, CURRENT_BRANCH stays empty, and neither
+    # comparison below matches.
+    CURRENT_BRANCH=$(git symbolic-ref --short -q HEAD 2>/dev/null || true)
+    if [ "$CURRENT_BRANCH" = "main" ] || [ "$CURRENT_BRANCH" = "master" ]; then
+      NAMES_DEFAULT_BRANCH=1
     fi
   fi
 
