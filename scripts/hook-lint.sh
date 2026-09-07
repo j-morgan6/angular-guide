@@ -329,6 +329,185 @@ check_ng007() {
   fi
 }
 
+check_ng010() {
+  [ "$EXT" = "ts" ] || return 0
+  is_spec && return 0
+  local rc
+  # For each .subscribe( call, inspect the chain back to the start of its
+  # statement. A chain carrying takeUntilDestroyed (or an explicit take/first
+  # completion operator) is considered self-terminating.
+  #
+  # The python pass wraps its logic in try/except and only ever exits 0 or 1
+  # itself: 1 means "found a bare subscribe", 0 means "clean or the pass
+  # errored" (fail-open). Do NOT gate this invocation with `|| return 0` --
+  # sys.exit(1) is a real, expected exit code here (the violation signal),
+  # and `||` would treat it identically to a crash and swallow every finding.
+  python3 - "$CODE_PATH" <<'PY' 2>/dev/null
+import re, sys
+try:
+    src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
+    SAFE = ("takeUntilDestroyed", "takeUntil(", "take(", "first(", "firstValueFrom", "lastValueFrom")
+    hit = False
+    for m in re.finditer(r"\.subscribe\s*\(", src):
+        start = max(src.rfind(";", 0, m.start()), src.rfind("{", 0, m.start()),
+                    src.rfind("}", 0, m.start()), src.rfind("=>", 0, m.start()))
+        chain = src[start + 1:m.start()]
+        if not any(s in chain for s in SAFE):
+            hit = True
+            break
+    sys.exit(1 if hit else 0)
+except Exception:
+    sys.exit(0)
+PY
+  rc=$?
+  if [ "$rc" -eq 1 ]; then
+    add '🚫 NG010: `.subscribe()` with no teardown in its chain.
+   💡 Fix: Prefer not subscribing at all — use the `async` pipe, `toSignal(obs$)`, or `httpResource()`. When you must subscribe, add teardown:
+     obs$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(...)
+   Manual subscriptions without teardown are the most common memory leak in Angular apps.
+   See: rxjs-interop skill'
+  fi
+}
+
+check_ng011() {
+  [ "$EXT" = "ts" ] || return 0
+  if grep -qE '\.mutate[[:space:]]*\(' "$CODE_PATH" 2>/dev/null; then
+    add '🚫 NG011: `.mutate()` on a signal — the API was removed.
+   💡 Fix: Use `set()` with a new value, or `update()` with a pure transform:
+     this.items.update((xs) => [...xs, item]);
+   Signals compare by reference, so in-place mutation would not notify readers.
+   See: signals-essentials skill'
+  fi
+}
+
+check_ng012() {
+  [ "$EXT" = "ts" ] || return 0
+  local rc
+  # Same fail-open contract as NG010: the python pass exits 1 only for a
+  # deliberately detected violation, 0 for clean or an internal error, and
+  # the shell must read that exit code directly rather than via `|| return 0`.
+  python3 - "$CODE_PATH" <<'PY' 2>/dev/null
+import re, sys
+try:
+    src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
+    hit = False
+    for m in re.finditer(r"\beffect\s*\(", src):
+        i = m.end() - 1
+        depth, j, n = 0, i, len(src)
+        while j < n:
+            if src[j] == "(":
+                depth += 1
+            elif src[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        body = src[i:j]
+        if re.search(r"\.(set|update)\s*\(", body):
+            hit = True
+            break
+    sys.exit(1 if hit else 0)
+except Exception:
+    sys.exit(0)
+PY
+  rc=$?
+  if [ "$rc" -eq 1 ]; then
+    add '🚫 NG012: `effect()` writes a signal.
+   💡 Fix: Effects are for side effects that leave the reactive graph — logging, third-party DOM, analytics. Derived state belongs in `computed()`; writable state derived from other signals belongs in `linkedSignal()`. Writing signals inside an effect creates feedback loops and re-entrant change detection.
+   See: signals-essentials skill'
+  fi
+}
+
+check_ng013() {
+  gate_v20 || return 0
+  local rc
+  # Same fail-open contract as NG010/NG012 -- read the python pass's exit
+  # code directly; do not gate the invocation with `|| return 0`.
+  #
+  # The @for clause must be extracted with balanced-paren matching, not
+  # `[^)]*` up to the first `)`: the near-universal `@for (x of xs(); track
+  # x.id)` form calls a signal, so `[^)]*` would stop at the `)` that closes
+  # `xs()` and never see `track` at all -- a false NG013 on the very pattern
+  # this plugin exists to encourage.
+  python3 - "$CODE_PATH" <<'PY' 2>/dev/null
+import re, sys
+try:
+    src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
+    hit = False
+    for m in re.finditer(r"@for\s*\(", src):
+        i = m.end() - 1
+        depth, j, n = 0, i, len(src)
+        while j < n:
+            if src[j] == "(":
+                depth += 1
+            elif src[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        clause = src[i + 1:j]
+        if "track" not in clause:
+            hit = True
+            break
+    sys.exit(1 if hit else 0)
+except Exception:
+    sys.exit(0)
+PY
+  rc=$?
+  if [ "$rc" -eq 1 ]; then
+    add '🚫 NG013: `@for` without a `track` expression.
+   💡 Fix: Add a stable identity — `@for (item of items(); track item.id) { }`. `track` is mandatory; without it Angular cannot reuse DOM nodes and rebuilds the whole list on every change.
+   See: performance-and-zoneless skill'
+  fi
+}
+
+check_ng014() {
+  if grep -qE '\[innerHTML\]|\[outerHTML\]' "$CODE_PATH" 2>/dev/null; then
+    add '🚫 NG014: `[innerHTML]` binding.
+   💡 Fix: Render text with interpolation, or compose real components. If you must render untrusted markup, sanitize it server-side and render through a vetted component — Angular sanitizes `[innerHTML]` but the pattern still invites XSS as soon as someone reaches for bypassSecurityTrust.
+   See: angular-essentials skill'
+  fi
+}
+
+check_ng015() {
+  [ "$EXT" = "ts" ] || return 0
+  if grep -q 'bypassSecurityTrust' "$CODE_PATH" 2>/dev/null; then
+    add '🚫 NG015: `bypassSecurityTrust*` call.
+   💡 Fix: This disables Angular XSS protection for that value. Sanitize upstream and render normally. If a genuine trusted-value case exists, it belongs in one reviewed, narrowly-scoped helper — never inline in a component.
+   See: angular-essentials skill'
+  fi
+}
+
+check_ng016() {
+  [ "$EXT" = "ts" ] || return 0
+  printf '%s' "$FILE_PATH" | grep -qE '/environments?/|environment(\.[a-z]+)*\.ts$' || return 0
+  if grep -qiE '(key|secret|token|password|credential)[A-Za-z]*[[:space:]]*:[[:space:]]*["'"'"'][^"'"'"']+["'"'"']' "$CODE_PATH" 2>/dev/null \
+     && ! grep -qE 'process\.env|import\.meta\.env' "$CODE_PATH" 2>/dev/null; then
+    add '🚫 NG016: Secret-shaped value in an environment file.
+   💡 Fix: `environment.ts` is compiled into the browser bundle — anything in it is public. Move the secret behind your backend and have the client call your API. Build-time injection does not help; the value still ships.
+   See: angular-essentials skill'
+  fi
+}
+
+check_ng017() {
+  gate zoneless || return 0
+  if grep -qE "(import|require).*['\"]zone\.js" "$CODE_PATH" 2>/dev/null; then
+    add '🚫 NG017: `zone.js` import in a zoneless workspace.
+   💡 Fix: Remove the import. This app runs with `provideZonelessChangeDetection()`; loading zone.js re-introduces monkey-patching of every async API and negates the benefit.
+   See: performance-and-zoneless skill'
+  fi
+}
+
+check_ng018() {
+  gate_eq test_runner vitest || return 0
+  [ "$EXT" = "ts" ] || return 0
+  if grep -qE '\bjasmine\.|\bjasmine\b[[:space:]]*\.' "$CODE_PATH" 2>/dev/null; then
+    add '🚫 NG018: Jasmine API in a Vitest workspace.
+   💡 Fix: Use the Vitest equivalents — `vi.fn()` for `jasmine.createSpy()`, `vi.spyOn()` for `spyOn()`, `expect.objectContaining()` for `jasmine.objectContaining()`. TestBed itself is unchanged.
+   See: testing-essentials skill'
+  fi
+}
+
 # -------------------------------------------------------------------- driver
 
 if [ "$MODE" = "pre" ]; then
@@ -341,6 +520,15 @@ if [ "$MODE" = "pre" ]; then
   check_ng007
   check_ng008
   check_ng009
+  check_ng010
+  check_ng011
+  check_ng012
+  check_ng013
+  check_ng014
+  check_ng015
+  check_ng016
+  check_ng017
+  check_ng018
 else
   :
 fi

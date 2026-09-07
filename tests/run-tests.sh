@@ -740,6 +740,103 @@ expect N009-silent 0 none ""
 
 ###############################################################################
 echo
+echo "== NG010-NG018 (reactivity, security, workspace-gated) =="
+###############################################################################
+
+cd "$V22" || exit 1
+
+# NG010 subscribe without teardown
+run "$(write_json "$V22/src/app/a.ts" 'export class A {
+  ngOnInit() { this.svc.items$.subscribe((v) => this.items.set(v)); }
+}')" bash "$HOOK_LINT" pre
+expect N010-bare-subscribe 2 err "NG010"
+
+run "$(write_json "$V22/src/app/a.ts" 'export class A {
+  ngOnInit() { this.svc.items$.pipe(takeUntilDestroyed(this.ref)).subscribe((v) => this.items.set(v)); }
+}')" bash "$HOOK_LINT" pre
+expect N010-with-teardown-ok 0 none ""
+
+# A file with one guarded and one bare subscription must still be caught
+run "$(write_json "$V22/src/app/a.ts" 'export class A {
+  a() { this.x$.pipe(takeUntilDestroyed()).subscribe(f); }
+  b() { this.y$.subscribe(g); }
+}')" bash "$HOOK_LINT" pre
+expect N010-mixed-caught 2 err "NG010"
+
+# Spec files are exempt — test subscriptions are scoped to the test
+run "$(write_json "$V22/src/app/a.spec.ts" 'it("works", () => { obs$.subscribe(done); });')" bash "$HOOK_LINT" pre
+expect N010-spec-exempt 0 none ""
+
+# NG011 signal.mutate()
+run "$(write_json "$V22/src/app/a.ts" 'this.items.mutate((v) => v.push(x));')" bash "$HOOK_LINT" pre
+expect N011-mutate 2 err "NG011"
+
+# NG012 effect() writing a signal
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { this.total.set(this.a() + this.b()); });')" bash "$HOOK_LINT" pre
+expect N012-effect-writes 2 err "NG012"
+
+run "$(write_json "$V22/src/app/a.ts" 'readonly total = computed(() => this.a() + this.b());
+effect(() => { console.log(this.total()); });')" bash "$HOOK_LINT" pre
+expect N012-effect-readonly-ok 0 none ""
+
+# A .set() outside any effect is fine
+run "$(write_json "$V22/src/app/a.ts" 'onClick() { this.count.set(1); }')" bash "$HOOK_LINT" pre
+expect N012-set-outside-effect-ok 0 none ""
+
+# NG013 @for without track
+run "$(write_json "$V22/src/app/a.html" '@for (item of items(); let i = $index) { <li>{{item}}</li> }')" bash "$HOOK_LINT" pre
+expect N013-no-track 2 err "NG013"
+
+run "$(write_json "$V22/src/app/a.html" '@for (item of items(); track item.id) { <li>{{item}}</li> }')" bash "$HOOK_LINT" pre
+expect N013-track-ok 0 none ""
+
+# NG014 innerHTML
+run "$(write_json "$V22/src/app/a.html" '<div [innerHTML]="body"></div>')" bash "$HOOK_LINT" pre
+expect N014-innerhtml 2 err "NG014"
+
+# NG015 bypassSecurityTrust
+run "$(write_json "$V22/src/app/a.ts" 'const u = this.san.bypassSecurityTrustHtml(raw);')" bash "$HOOK_LINT" pre
+expect N015-bypass 2 err "NG015"
+
+# NG016 secrets in environment files
+run "$(write_json "$V22/src/environments/environment.ts" 'export const environment = { apiKey: "sk_live_abc123def456" };')" bash "$HOOK_LINT" pre
+expect N016-secret 2 err "NG016"
+
+run "$(write_json "$V22/src/environments/environment.ts" 'export const environment = { apiKey: "" };')" bash "$HOOK_LINT" pre
+expect N016-empty-ok 0 none ""
+
+run "$(write_json "$V22/src/environments/environment.ts" 'export const environment = { apiUrl: "https://api.example.com" };')" bash "$HOOK_LINT" pre
+expect N016-nonsecret-ok 0 none ""
+
+# NG017 zone.js in a zoneless workspace
+run "$(write_json "$V22/src/app/a.ts" 'import "zone.js";')" bash "$HOOK_LINT" pre
+expect N017-zonejs-zoneless 2 err "NG017"
+
+# ...and silent in a workspace that still depends on zone.js
+ZONED="$TMPROOT/zoned"; ng_workspace "$ZONED" "22.0.0" '{"zone.js":"~0.15.0"}'
+mkdir -p "$ZONED/src/app"; cd "$ZONED" || exit 1; bash "$DETECT" >/dev/null 2>&1
+run "$(write_json "$ZONED/src/app/a.ts" 'import "zone.js";')" bash "$HOOK_LINT" pre
+expect N017-silent-when-zoned 0 none ""
+
+# NG018 Jasmine APIs in a Vitest workspace
+VIT="$TMPROOT/vit"; ng_workspace "$VIT" "22.0.0" '{"vitest":"^3.0.0"}'
+mkdir -p "$VIT/src/app"; cd "$VIT" || exit 1; bash "$DETECT" >/dev/null 2>&1
+run "$(write_json "$VIT/src/app/a.spec.ts" 'const spy = jasmine.createSpy("x");')" bash "$HOOK_LINT" pre
+expect N018-jasmine-in-vitest 2 err "NG018"
+
+run "$(write_json "$VIT/src/app/a.spec.ts" 'const spy = vi.fn();')" bash "$HOOK_LINT" pre
+expect N018-vi-ok 0 none ""
+
+# ...and silent in a Karma workspace
+KAR="$TMPROOT/kar"; ng_workspace "$KAR" "21.0.0" '{"karma":"~6.4.0"}'
+mkdir -p "$KAR/src/app"; cd "$KAR" || exit 1; bash "$DETECT" >/dev/null 2>&1
+run "$(write_json "$KAR/src/app/a.spec.ts" 'const spy = jasmine.createSpy("x");')" bash "$HOOK_LINT" pre
+expect N018-silent-on-karma 0 none ""
+
+cd "$V22" || exit 1
+
+###############################################################################
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || { printf '  - %s\n' "${FAILED_NAMES[@]}"; exit 1; }
 exit 0
