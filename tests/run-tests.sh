@@ -425,6 +425,49 @@ expect B14-malformed-fails-open 0 none ""
 
 ###############################################################################
 echo
+echo "== bash-guard.sh (BG001/BG003/BG004/BG005 hardening) =="
+###############################################################################
+
+# Real git repos with controlled branches, for the BG001 current-branch
+# inference arm (an unqualified force push names no branch, so it pushes
+# whichever branch is checked out).
+GITMAIN="$TMPROOT/bg-git-main"; mkdir -p "$GITMAIN"
+( cd "$GITMAIN" && git init -q -b main . ) >/dev/null 2>&1
+
+GITFEAT="$TMPROOT/bg-git-feature"; mkdir -p "$GITFEAT"
+( cd "$GITFEAT" && git init -q -b main . && git checkout -q -b feature/x ) >/dev/null 2>&1
+
+GITNONE="$TMPROOT/bg-no-git"; mkdir -p "$GITNONE"
+
+cd "$GITMAIN" || exit 1
+run "$(bash_json "$PUSH $FORCE")" bash "$BASH_GUARD"
+expect B15-unqualified-force-blocks-on-main 2 err "BG001"
+
+cd "$GITFEAT" || exit 1
+run "$(bash_json "$PUSH $FORCE")" bash "$BASH_GUARD"
+expect B16-unqualified-force-ok-on-feature-branch 0 none ""
+
+cd "$GITNONE" || exit 1
+run "$(bash_json "$PUSH $FORCE")" bash "$BASH_GUARD"
+expect B17-unqualified-force-ok-when-branch-lookup-fails 0 none ""
+
+cd "$GITMAIN" || exit 1
+run "$(bash_json "$PUSH ${FORCE}-with-lease")" bash "$BASH_GUARD"
+expect B18-unqualified-lease-ok-on-main 0 none ""
+
+cd "$WORK" || exit 1
+
+run "$(bash_json 'ng test --runInBand')" bash "$BASH_GUARD"
+expect B19-ng-test-runinband-still-blocks 2 err "BG004"
+
+run "$(bash_json 'echo run npm install if needed')" bash "$BASH_GUARD"
+expect B20-pm-mismatch-not-fooled-by-prose 0 none ""
+
+run "$(bash_json 'confirm -rf pnpm-lock.yaml')" bash "$BASH_GUARD"
+expect B21-rm-not-a-substring-of-another-word 0 none ""
+
+###############################################################################
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || { printf '  - %s\n' "${FAILED_NAMES[@]}"; exit 1; }
 exit 0
