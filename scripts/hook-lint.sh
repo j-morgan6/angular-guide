@@ -183,10 +183,14 @@ if [ -n "$CODE_TMP" ]; then
   python3 -c '
 import sys
 
-def strip_comments(src):
+def strip_comments(src, is_html):
     out = []
     i, n = 0, len(src)
     in_str = None   # None, or the quote character ("\x27", "\"", "`") we are inside
+    # in_tag is only meaningful for HTML content: true while scanning inside
+    # a <tag ...> construct (between an opening "<" and its closing ">"), as
+    # opposed to text content between tags.
+    in_tag = False
     while i < n:
         c = src[i]
         nxt = src[i + 1] if i + 1 < n else ""
@@ -213,11 +217,6 @@ def strip_comments(src):
                 in_str = None
             i += 1
             continue
-        if c in ("\"", "\x27", "`"):
-            in_str = c
-            out.append(c)
-            i += 1
-            continue
         if src[i:i + 4] == "<!--":
             i += 4
             while i < n and src[i:i + 3] != "-->":
@@ -225,6 +224,38 @@ def strip_comments(src):
                     out.append("\n")
                 i += 1
             i += 3
+            continue
+        if is_html and c == "<":
+            in_tag = True
+            out.append(c)
+            i += 1
+            continue
+        if is_html and c == ">" and in_tag:
+            in_tag = False
+            out.append(c)
+            i += 1
+            continue
+        if c in ("\"", "\x27", "`"):
+            # In HTML content, a quote is only a string delimiter INSIDE a
+            # tag (an attribute value) -- at top level, in text content, a
+            # bare apostrophe ("Don'"'"'t do this") is prose, not the start of a
+            # string literal. Before this check, an apostrophe in HTML text
+            # would flip in_str on with no matching close anywhere in the
+            # file, trapping the scanner in "inside a string" for the rest
+            # of the file -- which meant the <!-- --> handling above (only
+            # reachable when not in_str) never ran again, so a real comment
+            # later in the file was never blanked and its contents (e.g. a
+            # commented-out *ngIf) fired a false positive. .ts content is
+            # unaffected: is_html is only true for .html files, so a
+            # top-level quote there still always opens a real string
+            # literal, exactly as before.
+            if c != "`" and is_html and not in_tag:
+                out.append(c)
+                i += 1
+                continue
+            in_str = c
+            out.append(c)
+            i += 1
             continue
         if c == "/" and nxt == "/":
             i += 2
@@ -244,8 +275,9 @@ def strip_comments(src):
     return "".join(out)
 
 src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
-open(sys.argv[2], "w").write(strip_comments(src))
-' "$CONTENT_PATH" "$CODE_PATH" 2>/dev/null || cp "$CONTENT_PATH" "$CODE_PATH" 2>/dev/null
+is_html = sys.argv[3] == "html"
+open(sys.argv[2], "w").write(strip_comments(src, is_html))
+' "$CONTENT_PATH" "$CODE_PATH" "$EXT" 2>/dev/null || cp "$CONTENT_PATH" "$CODE_PATH" 2>/dev/null
 else
   CODE_PATH="$CONTENT_PATH"
 fi
@@ -355,7 +387,58 @@ check_ng009() {
 }
 
 check_ng007() {
-  if grep -qE '(:[[:space:]]*any\b|\bas[[:space:]]+any\b|<any>)' "$CODE_PATH" 2>/dev/null; then
+  # Unlike NG005/NG009/NG011, this rule used to have no extension guard, so
+  # it ran on .html templates too (e.g. "Pick a size: any of these will
+  # do."). Restrict it to .ts, matching the other type-level rules.
+  [ "$EXT" = "ts" ] || return 0
+  local rc
+  # `any` the TYPE must not fire on `any` the WORD sitting inside a string
+  # literal (e.g. `"expected type: any but got string"`). $CODE_PATH already
+  # has comments stripped but NOT string content blanked -- that stripper is
+  # shared by all 24 rules and deliberately preserves string content (see
+  # H12/H13: a `//` or `https://` inside a string must not be misread as a
+  # comment start). So this reuses that same quote-tracking state machine as
+  # a second, NG007-local pass that additionally blanks string-literal
+  # content before matching, rather than writing an unrelated second
+  # scanner. Same fail-open contract as NG010/NG012/NG013: read the exit
+  # code directly, do not gate with `|| return 0`.
+  python3 - "$CODE_PATH" <<'PY' 2>/dev/null
+import re, sys
+try:
+    src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
+    out = []
+    i, n = 0, len(src)
+    in_str = None  # None, or the quote character ("'", '"', "`") we are inside
+    while i < n:
+        c = src[i]
+        if in_str:
+            if c == "\\" and i + 1 < n:
+                out.append("  ")
+                i += 2
+                continue
+            if c == in_str:
+                in_str = None
+                out.append(c)
+                i += 1
+                continue
+            out.append(c if c == "\n" else " ")
+            i += 1
+            continue
+        if c in ("\"", "\x27", "`"):
+            in_str = c
+            out.append(c)
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    blanked = "".join(out)
+    hit = bool(re.search(r"(:\s*any\b|\bas\s+any\b|<any>)", blanked))
+    sys.exit(1 if hit else 0)
+except Exception:
+    sys.exit(0)
+PY
+  rc=$?
+  if [ "$rc" -eq 1 ]; then
     add '🚫 NG007: `any` type detected.
    💡 Fix: Use `unknown` when the type is genuinely uncertain and narrow it, or give the value its real type. `any` disables every check TypeScript exists to provide.
    See: angular-essentials skill'
@@ -421,23 +504,48 @@ check_ng012() {
   # the shell must read that exit code directly rather than via `|| return 0`.
   python3 - "$CODE_PATH" <<'PY' 2>/dev/null
 import re, sys
+
+def balanced_span(s, open_paren_index):
+    # s[open_paren_index] is the "(" that opens the call; returns the index
+    # just past its matching ")".
+    depth, k, n = 0, open_paren_index, len(s)
+    while k < n:
+        if s[k] == "(":
+            depth += 1
+        elif s[k] == ")":
+            depth -= 1
+            if depth == 0:
+                return k + 1
+        k += 1
+    return n
+
 try:
     src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
     hit = False
     for m in re.finditer(r"\beffect\s*\(", src):
-        i = m.end() - 1
-        depth, j, n = 0, i, len(src)
-        while j < n:
-            if src[j] == "(":
-                depth += 1
-            elif src[j] == ")":
-                depth -= 1
-                if depth == 0:
-                    break
-            j += 1
-        body = src[i:j]
-        if re.search(r"\.(set|update)\s*\(", body):
-            hit = True
+        j = balanced_span(src, m.end() - 1)
+        body = src[m.end() - 1:j]
+
+        # untracked() is Angular's documented escape hatch for reading (or,
+        # here, writing) outside the reactive graph from inside an effect --
+        # `effect(() => { untracked(() => this.b.set(v)); })` is the
+        # sanctioned pattern, not the anti-pattern this rule exists to
+        # catch. Find every untracked(...) call's balanced-paren span within
+        # the effect body and exclude any .set(/.update( that falls inside
+        # one of them.
+        untracked_spans = []
+        for um in re.finditer(r"\buntracked\s*\(", body):
+            uend = balanced_span(body, um.end() - 1)
+            untracked_spans.append((um.start(), uend))
+
+        def in_untracked(pos):
+            return any(a <= pos < b for a, b in untracked_spans)
+
+        for sm in re.finditer(r"\.(set|update)\s*\(", body):
+            if not in_untracked(sm.start()):
+                hit = True
+                break
+        if hit:
             break
     sys.exit(1 if hit else 0)
 except Exception:
@@ -446,7 +554,7 @@ PY
   rc=$?
   if [ "$rc" -eq 1 ]; then
     add '🚫 NG012: `effect()` writes a signal.
-   💡 Fix: Effects are for side effects that leave the reactive graph — logging, third-party DOM, analytics. Derived state belongs in `computed()`; writable state derived from other signals belongs in `linkedSignal()`. Writing signals inside an effect creates feedback loops and re-entrant change detection.
+   💡 Fix: Effects are for side effects that leave the reactive graph — logging, third-party DOM, analytics. Derived state belongs in `computed()`; writable state derived from other signals belongs in `linkedSignal()`. Writing signals inside an effect creates feedback loops and re-entrant change detection. If you genuinely need to write from inside an effect, wrap that write in `untracked()` — NG012 excludes writes lexically inside an `untracked(...)` callback.
    See: signals-essentials skill'
   fi
 }

@@ -1055,6 +1055,98 @@ check R4-template-gitignore "CLAUDE.md.template tells users to gitignore the pro
 
 ###############################################################################
 echo
+echo "== I2: NG007 extension guard + string-literal awareness =="
+###############################################################################
+
+cd "$V22" || exit 1
+
+# Unlike NG005/NG009/NG011, NG007 had no [ "$EXT" = "ts" ] guard, so it ran
+# on .html templates and blocked ordinary prose containing the word "any".
+run "$(write_json "$V22/src/app/a.html" '<p>Pick a size: any of these will do.</p>')" bash "$HOOK_LINT" pre
+expect I2-html-prose-silent 0 none ""
+
+# ...and it matched "any" as a bare word anywhere, including inside a string
+# literal in a .ts file, not just the TYPE position.
+run "$(write_json "$V22/src/app/a.ts" 'export const MSG = "expected type: any but got string";')" bash "$HOOK_LINT" pre
+expect I2-string-literal-silent 0 none ""
+
+# Existing positive cases must still fire after both fixes.
+run "$(write_json "$V22/src/app/a.ts" 'const x: any = 1;')" bash "$HOOK_LINT" pre
+expect I2-type-annotation-fires 2 err "NG007"
+
+run "$(write_json "$V22/src/app/a.ts" 'const y = x as any;')" bash "$HOOK_LINT" pre
+expect I2-as-any-fires 2 err "NG007"
+
+run "$(write_json "$V22/src/app/a.ts" 'const z = <any>x;')" bash "$HOOK_LINT" pre
+expect I2-angle-any-fires 2 err "NG007"
+
+###############################################################################
+echo
+echo "== I3: apostrophe/quote must not disable HTML comment stripping =="
+###############################################################################
+
+cd "$V22" || exit 1
+
+# At top level a bare apostrophe in HTML text content ("Don't do this") used
+# to open a string literal that never found a matching close, trapping the
+# scanner in "inside a string" for the rest of the file -- so a REAL <!--
+# --> comment appearing later was never blanked, and a *ngIf sitting inside
+# it fired a false positive that blocked the write.
+run "$(write_json "$V22/src/app/a.html" '<p>Don'"'"'t do this</p>
+<!-- <div *ngIf="x"></div> -->')" bash "$HOOK_LINT" pre
+expect I3-apostrophe-then-comment-silent 0 none ""
+
+# The identical file with "Do not" (no apostrophe) was already silent --
+# pin that behavior so this fixture is a real differential, not a rule that
+# never fired either way.
+run "$(write_json "$V22/src/app/a.html" '<p>Do not do this</p>
+<!-- <div *ngIf="x"></div> -->')" bash "$HOOK_LINT" pre
+expect I3-no-apostrophe-baseline-silent 0 none ""
+
+# A real violation AFTER the apostrophe-bearing text must still fire --
+# the apostrophe must not swallow enforcement for the rest of the file
+# either (the mirror-image failure mode).
+run "$(write_json "$V22/src/app/a.html" '<p>Don'"'"'t do this</p>
+<div *ngIf="ready">hi</div>')" bash "$HOOK_LINT" pre
+expect I3-apostrophe-then-real-violation-fires 2 err "NG003"
+
+# Quotes inside a tag (attribute values) must still behave as string
+# delimiters -- an HTML-comment-looking sequence inside a quoted attribute
+# is NOT a real comment, and a real violation after it must still be caught
+# (mirrors the existing N003-quoted-string-not-comment-boundary pin).
+run "$(write_json "$V22/src/app/a.html" '<div title="<!-- fake"></div>
+<div *ngIf="ready">hi</div>')" bash "$HOOK_LINT" pre
+expect I3-attribute-quote-still-a-delimiter 2 err "NG003"
+
+###############################################################################
+echo
+echo "== I4: NG012 excludes writes inside untracked() =="
+###############################################################################
+
+cd "$V22" || exit 1
+
+# untracked() is Angular's documented escape hatch for writing outside the
+# reactive graph from inside an effect -- this must not fire.
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { untracked(() => this.b.set(v)); });')" bash "$HOOK_LINT" pre
+expect I4-untracked-set-silent 0 none ""
+
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { untracked(() => { this.b.update((x) => x + 1); }); });')" bash "$HOOK_LINT" pre
+expect I4-untracked-update-silent 0 none ""
+
+# A write OUTSIDE the untracked() callback, even in an effect that also
+# contains an untracked() call elsewhere, must still fire.
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { untracked(() => console.log(this.a())); this.total.set(this.a()); });')" bash "$HOOK_LINT" pre
+expect I4-write-outside-untracked-still-fires 2 err "NG012"
+
+# Known, documented limitation (not fixed): a plain Map/WeakMap .set() call
+# inside an effect is indistinguishable from a signal .set() call without
+# type information, so it is still flagged. Pinned here as a known false
+# positive rather than silently left untested.
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { this.cache.set(k, v); });')" bash "$HOOK_LINT" pre
+expect I4-plain-map-set-known-false-positive 2 err "NG012"
+
+###############################################################################
+echo
 echo "== C1: file_path newline injection (arbitrary file deletion) =="
 ###############################################################################
 
