@@ -254,6 +254,20 @@ check_ng003() {
 check_ng004() {
   gate_v20 || return 0
   [ "$EXT" = "ts" ] || return 0
+  # Constructor-parameter properties are ordinary TypeScript and are common
+  # in plain data/value classes (e.g. `constructor(private amount: number)`
+  # on a Money class) that have nothing to do with Angular DI. The pattern
+  # below is only an anti-pattern inside a class Angular actually manages,
+  # so require an Angular class decorator somewhere in the file (matched
+  # against $CODE_PATH, comments already stripped, so a commented-out
+  # decorator does not count) before treating it as a finding.
+  grep -qE '@(Component|Directive|Injectable|Service|Pipe|NgModule)\b' "$CODE_PATH" 2>/dev/null || return 0
+  # Known limitation, left unfixed deliberately: a default-value expression
+  # containing its own parens before the injected param, e.g.
+  #   constructor(fn = () => 1, private http: HttpClient) {}
+  # closes the `[^)]*` at the default value's `)` and the rule stays silent
+  # (a false negative) instead of firing. Missed detections are recoverable
+  # by review; blocked correct writes are not, so this is not tightened.
   if printf '%s' "$COLLAPSED" \
      | grep -qE 'constructor[[:space:]]*\([^)]*\b(private|public|protected|readonly)[[:space:]]+[A-Za-z_$][A-Za-z0-9_$]*[[:space:]]*:'; then
     add '🚫 NG004: Constructor-parameter dependency injection.

@@ -640,8 +640,33 @@ expect N003-inline-template 2 err "NG003"
 run "$(write_json "$V22/src/app/a.html" '@if (ready) { <div>hi</div> }')" bash "$HOOK_LINT" pre
 expect N003-silent 0 none ""
 
-# NG004 constructor-parameter DI, including the multi-line form
-run "$(write_json "$V22/src/app/s.ts" 'export class S {
+# Standing fixtures for the HTML-comment-stripping fix (comment stripper
+# only handled // and /* */ before; *ngIf/[ngClass] sitting inside an
+# HTML comment was a real false positive, fixed by teaching the stripper
+# about <!-- --> both at top level and inside backtick template strings).
+run "$(write_json "$V22/src/app/a.html" '<!-- old: <div *ngIf="x"></div> -->
+<div>hi</div>')" bash "$HOOK_LINT" pre
+expect N003-html-comment-only-silent 0 none ""
+
+run "$(write_json "$V22/src/app/a.html" '<!-- unrelated note -->
+<div *ngIf="ready">hi</div>')" bash "$HOOK_LINT" pre
+expect N003-html-comment-plus-real-fires 2 err "NG003"
+
+run "$(write_json "$V22/src/app/a.ts" '@Component({ template: `<!-- <div [ngClass]="x"></div> --><div>hi</div>` })
+export class A {}')" bash "$HOOK_LINT" pre
+expect N008-inline-template-comment-silent 0 none ""
+
+# Boundary pin: an HTML-comment-looking sequence inside a quoted string is
+# NOT a comment -- content after it must still be scanned normally.
+run "$(write_json "$V22/src/app/a.html" '<div title="<!-- fake"></div>
+<div *ngIf="ready">hi</div>')" bash "$HOOK_LINT" pre
+expect N003-quoted-string-not-comment-boundary 2 err "NG003"
+
+# NG004 constructor-parameter DI, including the multi-line form.
+# Must be a decorated (Angular-managed) class, or the rule has no basis --
+# see the false-positive guard fixtures below.
+run "$(write_json "$V22/src/app/s.ts" '@Injectable()
+export class S {
   constructor(
     private http: HttpClient,
     private router: Router,
@@ -649,7 +674,8 @@ run "$(write_json "$V22/src/app/s.ts" 'export class S {
 }')" bash "$HOOK_LINT" pre
 expect N004-multiline 2 err "NG004"
 
-run "$(write_json "$V22/src/app/s.ts" 'export class S {
+run "$(write_json "$V22/src/app/s.ts" '@Injectable()
+export class S {
   private http = inject(HttpClient);
 }')" bash "$HOOK_LINT" pre
 expect N004-silent 0 none ""
@@ -659,6 +685,15 @@ run "$(write_json "$V22/src/app/p.ts" 'export class P {
   constructor(name: string) { this.name = name; }
 }')" bash "$HOOK_LINT" pre
 expect N004-plain-ctor-ok 0 none ""
+
+# False-positive guard: an undecorated class using ordinary TypeScript
+# constructor-parameter-property syntax (a plain data/value class) is NOT
+# Angular DI and must not fire NG004, even though the parameter shape is
+# textually identical to the DI pattern above.
+run "$(write_json "$V22/src/app/money.ts" 'export class Money {
+  constructor(private amount: number, private currency: string) {}
+}')" bash "$HOOK_LINT" pre
+expect N004-undecorated-ctor-ok 0 none ""
 
 # NG005 decorators
 run "$(write_json "$V22/src/app/a.ts" 'export class A { @Input() name!: string; }')" bash "$HOOK_LINT" pre
