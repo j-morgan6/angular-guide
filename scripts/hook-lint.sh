@@ -551,7 +551,14 @@ check_ng104() {
   # before `src=`. Requiring one or more there (`+`) makes the single most
   # common case never match; `*` also matches when other attributes precede
   # src (e.g. `<img class="hero" src="...">`).
-  if grep -qE '<img[^>]*[[:space:]]src=["'"'"']' "$CODE_PATH" 2>/dev/null; then
+  #
+  # Matched against $COLLAPSED, not $CODE_PATH: Prettier wraps long <img>
+  # tags across multiple lines as a matter of course, and grep matches
+  # line-by-line, so a line-based match on $CODE_PATH misses exactly the
+  # long, attribute-heavy tags that most need optimizing. [^>]* still cannot
+  # cross a `>`, so flattening to one line cannot produce a spurious match
+  # spanning two adjacent tags.
+  if printf '%s' "$COLLAPSED" | grep -qE '<img[^>]*[[:space:]]src=["'"'"']' 2>/dev/null; then
     add '⚠️  NG104: Static `<img src>` without NgOptimizedImage.
    💡 Fix: Import NgOptimizedImage and use `ngSrc` with explicit width/height (or `fill`):
      <img ngSrc="/assets/hero.png" width="800" height="600" alt="Hero">

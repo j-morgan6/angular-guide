@@ -885,6 +885,27 @@ expect N104-ngsrc-ok 0 none ""
 post_file "$V22/src/app/a.html" '<img [src]="avatarUrl()" alt="Avatar">'
 expect N104-bound-src-ok 0 none ""
 
+# Prettier wraps long <img> tags across lines as a matter of course, so the
+# multiline form is the common shape in a formatted template, not an edge
+# case. grep is line-based, so this must be matched against $COLLAPSED, not
+# $CODE_PATH -- a line-based match stays silent on exactly this fixture.
+post_file "$V22/src/app/a.html" '<img
+  src="/assets/hero.png"
+  alt="Hero">'
+expect N104-multiline-src 2 err "NG104"
+
+post_file "$V22/src/app/a.html" '<img
+  ngSrc="/assets/hero.png"
+  width="800" height="600"
+  alt="Hero">'
+expect N104-multiline-ngsrc-ok 0 none ""
+
+# Pins the flattening boundary: [^>]* cannot cross a `>`, so collapsing two
+# adjacent, individually-clean tags onto one line must not manufacture a
+# match by bridging the end of one tag into the start of the next.
+post_file "$V22/src/app/a.html" '<img ngSrc="/a.png" width="1" height="1" alt="A"><img ngSrc="/b.png" width="1" height="1" alt="B">'
+expect N104-adjacent-tags-no-cross-match 0 none ""
+
 # NG105 direct DOM access in a component
 post_file "$V22/src/app/a.component.ts" 'export class A { init() { document.getElementById("x"); } }'
 expect N105-document-access 2 err "NG105"
