@@ -1147,6 +1147,56 @@ expect I4-plain-map-set-known-false-positive 2 err "NG012"
 
 ###############################################################################
 echo
+echo "== I5: monorepo -- bounded downward search when the upward walk finds nothing =="
+###############################################################################
+
+# A monorepo with angular.json at apps/web/ and a session started at the
+# repo root: the upward walk from $PWD finds nothing, so before this fix the
+# whole plugin went silently inert (no profile, no NG001-NG006/NG013/NG102/
+# NG103). Bounded downward search should find the single angular.json and
+# write the profile there.
+I5A="$TMPROOT/i5-mono"; mkdir -p "$I5A/apps/web"
+ng_workspace "$I5A/apps/web" "22.0.0"
+cd "$I5A" || exit 1
+run "" bash "$DETECT"
+I5A_OK=0
+[ "$CODE" = "0" ] || I5A_OK=1
+[ -f "$I5A/apps/web/.angular-guide-project.json" ] || I5A_OK=1
+[ -f "$I5A/.angular-guide-project.json" ] && I5A_OK=1
+grep -q '"angular_major": 22' "$I5A/apps/web/.angular-guide-project.json" 2>/dev/null || I5A_OK=1
+check I5-monorepo-downward-search "session at repo root finds the single nested angular.json downward" "$I5A_OK"
+
+# node_modules must be pruned from the downward search -- an angular.json
+# shipped inside a dependency must never be mistaken for the workspace root.
+I5B="$TMPROOT/i5-nm"; mkdir -p "$I5B/node_modules/some-pkg"
+printf '{"version":1,"projects":{}}\n' > "$I5B/node_modules/some-pkg/angular.json"
+cd "$I5B" || exit 1
+run "" bash "$DETECT"
+I5B_OK=0
+[ "$CODE" = "0" ] || I5B_OK=1
+[ ! -f "$I5B/.angular-guide-project.json" ] || I5B_OK=1
+[ ! -f "$I5B/node_modules/some-pkg/.angular-guide-project.json" ] || I5B_OK=1
+check I5b-monorepo-skips-node-modules "angular.json under node_modules is never treated as a workspace root" "$I5B_OK"
+
+# Two angular.json files at the same shallowest depth: genuinely ambiguous.
+# Writing no profile is correct -- guessing wrong would be worse than
+# staying inert.
+I5C="$TMPROOT/i5-ambig"; mkdir -p "$I5C/apps/web" "$I5C/apps/admin"
+ng_workspace "$I5C/apps/web" "22.0.0"
+ng_workspace "$I5C/apps/admin" "21.0.0"
+cd "$I5C" || exit 1
+run "" bash "$DETECT"
+I5C_OK=0
+[ "$CODE" = "0" ] || I5C_OK=1
+[ ! -f "$I5C/apps/web/.angular-guide-project.json" ] || I5C_OK=1
+[ ! -f "$I5C/apps/admin/.angular-guide-project.json" ] || I5C_OK=1
+[ ! -f "$I5C/.angular-guide-project.json" ] || I5C_OK=1
+check I5c-monorepo-ambiguous-writes-no-profile "two angular.json at the same depth -> no profile written, exit 0" "$I5C_OK"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
 echo "== C1: file_path newline injection (arbitrary file deletion) =="
 ###############################################################################
 

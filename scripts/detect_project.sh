@@ -20,7 +20,37 @@ find_workspace_root() {
   return 1
 }
 
-ROOT=$(find_workspace_root 2>/dev/null) || exit 0
+# In a monorepo with angular.json at, say, apps/web/, a session started at
+# the repo root has nothing above it to find -- the upward walk alone leaves
+# the whole plugin silently off (no profile, no NG001-NG006/NG013/NG102/
+# NG103). Only tried once the upward walk has already failed. Bounded in
+# both depth and match count so this stays fast on every SessionStart;
+# node_modules and .git are pruned since a nested angular.json under either
+# is never a real workspace root. If more than one angular.json is found at
+# the shallowest depth (or the search overflows the match cap), this is
+# genuinely ambiguous -- write no profile rather than guessing wrong.
+find_workspace_root_down() {
+  local out count
+  out=$(find "$PWD" -maxdepth 6 \( -name node_modules -o -name .git \) -prune -o -name angular.json -type f -print 2>/dev/null)
+  [ -n "$out" ] || return 1
+  count=$(printf '%s\n' "$out" | grep -c .)
+  [ "$count" -le 200 ] || return 1
+  printf '%s\n' "$out" | python3 -c '
+import sys, os
+paths = [l.rstrip("\n") for l in sys.stdin if l.strip()]
+if not paths:
+    sys.exit(1)
+depth = lambda p: p.count(os.sep)
+min_depth = min(depth(p) for p in paths)
+shallowest = [p for p in paths if depth(p) == min_depth]
+if len(shallowest) != 1:
+    sys.exit(1)
+print(os.path.dirname(shallowest[0]))
+' 2>/dev/null
+}
+
+ROOT=$(find_workspace_root 2>/dev/null) || ROOT=$(find_workspace_root_down 2>/dev/null) || exit 0
+[ -n "$ROOT" ] || exit 0
 [ -f "$ROOT/package.json" ] || exit 0
 
 CACHE="$ROOT/.angular-guide-project.json"
