@@ -15,7 +15,7 @@ converting reflexively to signals. That judgment call is this skill.
 
 ## RULES — Follow these with no exceptions
 
-1. **Prefer not subscribing** — use the `async` pipe, `toSignal()`, or `httpResource()`
+1. **Prefer not subscribing** — use the `async` pipe, `toSignal()`, or `httpResource()` (v22+)
 2. **Every manual `.subscribe()` needs teardown** — `takeUntilDestroyed()` (NG010)
 3. **`toSignal()` at the boundary** — convert to signals as early as possible
 4. **`toObservable()` only when a real RxJS operator is needed** — debounce, retry, concurrency
@@ -30,7 +30,7 @@ Most of the time there's a construct that avoids both:
 
 - Template-only consumption → `| async`
 - Feed a signal-based component or `computed()` → `toSignal()`
-- An HTTP call → `httpResource()` (skip RxJS entirely)
+- An HTTP call → `httpResource()` (v22+, skip RxJS entirely); before v22, `toSignal(this.http.get(...))` — see rule 3
 
 ```typescript
 export class SearchResults {

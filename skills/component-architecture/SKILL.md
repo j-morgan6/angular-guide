@@ -31,8 +31,9 @@ to stop.
 This is the single most common thing an AI gets wrong when asked to "add a screen that
 loads some data": it injects `HttpClient` directly into the component, adds a loading
 flag and an error flag, and transforms the response inline in a subscribe callback. Every
-part of that is wrong, and `resource()`/`httpResource()` (stable, v22) removes the reason
-it ever happened.
+part of that is wrong, and `resource()`/`httpResource()` (stable, v22+) removes the reason
+it ever happened. Before v22, the fallback is `HttpClient` plus `toSignal()` inside the
+service — the same render/decide split, an older API.
 
 Bad:
 
@@ -117,6 +118,8 @@ export class UserProfileComponent {
 The component now has one job — render three states of one resource — and the fetch
 logic lives somewhere it can be reused, unit-tested without a `TestBed`, and read by more
 than one screen.
+
+Both the `@Service()` decorator and `httpResource()` require v22. On v20–v21, use `@Injectable({ providedIn: 'root' })` and return `toSignal(this.http.get<User>(...))` from the service instead — the component side is unchanged, still reading a signal it doesn't own the fetch for.
 
 ## 2. No direct `document` / `window` in a component (NG105)
 

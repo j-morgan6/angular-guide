@@ -22,7 +22,7 @@ skill is the decision procedure Angular's own docs deliberately don't give you.
 5. **`update()` takes a pure transform** — return a new value, never mutate the argument
 6. **Read signals in templates by calling them** — `count()`, not `count`
 7. **Use `untracked()`** when reading a signal inside a reactive context without depending on it
-8. **Async state is `resource()` / `rxResource()` / `httpResource()`**, not an effect plus a signal
+8. **Async state is `resource()` / `rxResource()` / `httpResource()`** (v22+; before v22, `HttpClient` + `toSignal()`), not an effect plus a signal
 
 ## The decision table
 
@@ -34,8 +34,10 @@ you need, and the primitive is decided — no judgment call left to get wrong.
 | Independent writable state | `signal()` |
 | Value derived purely from other signals | `computed()` |
 | Derived, but locally overridable and reset when its source changes | `linkedSignal()` |
-| Async data keyed on other signals | `resource()` / `httpResource()` |
+| Async data keyed on other signals | `resource()` / `httpResource()` * |
 | A side effect outside the reactive graph | `effect()` |
+
+\* Stable in v22+. Before v22, use `HttpClient` + `toSignal()` for the same shape.
 
 If what you're about to write doesn't fit any row cleanly, that's a signal the design
 needs rethinking before the code — not a reason to reach for `effect()` as a catch-all.
@@ -197,7 +199,7 @@ constructor() {
 }
 ```
 
-## 8. Async state is `resource()` / `rxResource()` / `httpResource()` (v22, stable)
+## 8. Async state is `resource()` / `rxResource()` / `httpResource()` (v22+, stable)
 
 Don't hand-roll async state with a signal for the data, a signal for loading, a signal
 for the error, and an `effect()` that populates all three — that's rule 1's mistake
@@ -241,6 +243,25 @@ export class UserLookup {
 The template reads `userResource.value()`, `userResource.isLoading()`, and
 `userResource.error()` directly — no manual state juggling, and it automatically
 re-fetches when `userId()` changes.
+
+Before v22, without `resource()`, the closest equivalent is `toObservable()` piped
+through `switchMap()` and converted back with `toSignal()` — see `rxjs-interop` rule 3
+for the boundary-conversion pattern this relies on:
+
+```typescript
+export class UserLookup {
+  readonly userId = input.required<string>();
+  private readonly userService = inject(UserService);
+
+  readonly user = toSignal(
+    toObservable(this.userId).pipe(switchMap((id) => this.userService.fetch(id))),
+    { initialValue: null as User | null },
+  );
+}
+```
+
+It loses `.isLoading()` and `.error()` as separate signals — that gap is exactly what
+`resource()` closes once v22 is available.
 
 ## Reference
 

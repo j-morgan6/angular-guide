@@ -50,6 +50,8 @@ beyond the component itself.
 
 ### Rung 1 — a root-provided service with signals
 
+`@Service()` below is v22+ (rule 7); on v20–v21 the identical store is `@Injectable({ providedIn: 'root' })`.
+
 ```typescript
 @Service()
 export class CartStore {
