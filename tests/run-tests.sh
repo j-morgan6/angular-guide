@@ -1008,6 +1008,53 @@ check S3-subagent-covers-blocking "every blocking NG0xx rule appears in subagent
 
 ###############################################################################
 echo
+echo "== docs and agents =="
+###############################################################################
+
+R1_OK=0
+for f in README.md CLAUDE.md.template CHANGELOG.md; do
+  [ -s "$ROOT/$f" ] || R1_OK=1
+done
+check R1-docs-exist "README, CLAUDE.md.template, CHANGELOG are present and non-empty" "$R1_OK"
+
+R2_OK=0
+python3 - "$ROOT" <<'PY' 2>/dev/null || R2_OK=1
+import os, re, sys
+root = sys.argv[1]
+lint = open(os.path.join(root, "scripts", "hook-lint.sh"), encoding="utf-8").read()
+guard = open(os.path.join(root, "scripts", "bash-guard.sh"), encoding="utf-8").read()
+implemented = {d.upper() for d in re.findall(r"check_(ng\d{3})\s*\(\)", lint)}
+implemented |= set(re.findall(r"\b(BG\d{3})\b", guard))
+readme = open(os.path.join(root, "README.md"), encoding="utf-8").read()
+documented = set(re.findall(r"\b((?:NG|BG)\d{3})\b", readme))
+missing = sorted(implemented - documented)
+assert not missing, "rules implemented but undocumented in README: " + ", ".join(missing)
+PY
+check R2-readme-documents-every-rule "every implemented rule ID appears in the README" "$R2_OK"
+
+R3_OK=0
+python3 - "$ROOT" <<'PY' 2>/dev/null || R3_OK=1
+import os, re, sys, glob
+root = sys.argv[1]
+agents = sorted(glob.glob(os.path.join(root, "agents", "*.md")))
+assert len(agents) == 3, "expected 3 agents, got %d" % len(agents)
+for p in agents:
+    txt = open(p, encoding="utf-8").read()
+    assert txt.startswith("---\n"), p + ": missing frontmatter"
+    fm = txt.split("---", 2)[1]
+    for key in ("name:", "description:", "tools:"):
+        assert key in fm, "%s: frontmatter missing %s" % (p, key)
+    assert "Write" not in fm.split("tools:")[1].split("\n")[0], \
+        p + ": review agents must be read-only"
+PY
+check R3-agents-readonly "3 agents, valid frontmatter, no write tools" "$R3_OK"
+
+R4_OK=0
+grep -q '.angular-guide-project.json' "$ROOT/CLAUDE.md.template" 2>/dev/null || R4_OK=1
+check R4-template-gitignore "CLAUDE.md.template tells users to gitignore the profile cache" "$R4_OK"
+
+###############################################################################
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || { printf '  - %s\n' "${FAILED_NAMES[@]}"; exit 1; }
 exit 0
