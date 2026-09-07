@@ -536,6 +536,64 @@ printf '%s' "$OUT" | grep -q "NG001" || W3_OK=1
 printf '%s' "$OUT" | grep -qF "inject()" || W3_OK=1
 check W3-subagent-rules "subagent-rules emits rules on stdout, exit 0" "$W3_OK"
 
+# W4: per-event/matcher wiring — script AND trailing mode token, checked
+# together, so a hook-lint.sh pre/post swap between PreToolUse and
+# PostToolUse fails loudly instead of passing W2's existence-only checks.
+# The mode is parsed as a shell token (via shlex), not matched as a
+# substring, so it can't be fooled by "pre" appearing inside a path or
+# inside the literal string "PreToolUse".
+W4_OK=0
+python3 - "$ROOT" <<'PY' 2>/dev/null || W4_OK=1
+import json, os, re, shlex, sys
+
+root = sys.argv[1]
+d = json.load(open(os.path.join(root, "hooks", "hooks.json")))["hooks"]
+
+
+def command_for(event, matcher):
+    for group in d[event]:
+        if group.get("matcher", "") == matcher:
+            return group["hooks"][0]["command"]
+    raise AssertionError("no %s group with matcher %r" % (event, matcher))
+
+
+def script_and_mode(cmd):
+    # Resolve the plugin-root var to a plain path segment so shlex sees an
+    # ordinary word, then tokenize like a shell would (quotes respected).
+    tokens = shlex.split(cmd.replace("${CLAUDE_PLUGIN_ROOT}", "PLUGIN_ROOT"))
+    for i, tok in enumerate(tokens):
+        if re.search(r"PLUGIN_ROOT/scripts/[A-Za-z0-9_.-]+\.sh$", tok):
+            nxt = tokens[i + 1] if i + 1 < len(tokens) else None
+            # A real mode argument is a bare word (pre/post). Anything else
+            # immediately following the script — a redirection like
+            # "2>/dev/null;", a control operator, or nothing at all — means
+            # no mode argument was passed.
+            mode = nxt if nxt and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", nxt) else None
+            return tok, mode
+    raise AssertionError("no script invocation found in: " + cmd)
+
+
+expected = [
+    ("PreToolUse", "Write|Edit", "scripts/hook-lint.sh", "pre"),
+    ("PostToolUse", "Write|Edit", "scripts/hook-lint.sh", "post"),
+    ("PreToolUse", "Bash", "scripts/bash-guard.sh", None),
+    ("SessionStart", "", "scripts/detect_project.sh", None),
+    ("SubagentStart", "", "scripts/subagent-rules.sh", None),
+]
+
+for event, matcher, script, want_mode in expected:
+    cmd = command_for(event, matcher)
+    got_script, got_mode = script_and_mode(cmd)
+    assert got_script.endswith(script), (
+        "%s/%s: expected script %s, got %s" % (event, matcher, script, got_script)
+    )
+    assert got_mode == want_mode, (
+        "%s/%s (%s): expected mode %r, got %r"
+        % (event, matcher, script, want_mode, got_mode)
+    )
+PY
+check W4-hook-mode-wiring "each event+matcher invokes the right script with the right mode token" "$W4_OK"
+
 ###############################################################################
 echo
 echo "Results: $PASS passed, $FAIL failed"
