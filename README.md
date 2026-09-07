@@ -145,8 +145,8 @@ model, but the write already happened — nothing is undone.
 | NG102 | `FormBuilder` / `new FormGroup` / `fb.group(` in a non-spec `.ts` file | Prefer Signal Forms for a *new* form — form state is signals and composes with `computed()` with no `valueChanges` subscription. (Extending an existing Reactive Forms screen is fine; starting a new one isn't.) | only when the cached profile says `signal_forms_available: true` (v22+) |
 | NG103 | `@Injectable({ providedIn: 'root' })` | Use `@Service()` — same root-provided singleton, less ceremony. | only when the cached profile says `service_decorator_available: true` (v22+) |
 | NG104 | A static `<img ... src="...">` with no `NgOptimizedImage` — matched against a **newline-flattened copy of the file**, specifically so a `<img>` tag that Prettier has wrapped across multiple lines is still caught. | Import `NgOptimizedImage` and use `ngSrc` with explicit `width`/`height` (or `fill`). | none |
-| NG105 | Direct `document.`/`window.` access in a file that is a component — the path ends `.component.ts`, **or** its (comment-stripped) content contains `@Component` | Use `viewChild()` for elements, `afterRenderEffect()` for post-render DOM work, or inject `DOCUMENT` rather than the global. Direct globals break under SSR. | none |
-| NG106 | Structural complexity in a component file (same `.component.ts`-or-`@Component` test as NG105, run by the standalone `analyze_quality.sh`): an `HttpClient` reference, more than ~200 non-blank lines, or more than ~8 `input()`/`input.required()` declarations | Move HTTP into a service; split the component; collapse many scalar inputs into one object input. | none |
+| NG105 | Direct `document.`/`window.` access in a file that is a component — the path ends `.component.ts`, **or** its (comment-stripped) content contains `@Component` — skipped entirely in `.spec.ts`/`.test.ts` files. | Use `viewChild()` for elements, `afterRenderEffect()` for post-render DOM work, or inject `DOCUMENT` rather than the global. Direct globals break under SSR. | none |
+| NG106 | Structural complexity in a component file (same `.component.ts`-or-`@Component` test as NG105, run by the standalone `analyze_quality.sh`): an `HttpClient` reference, more than ~200 non-blank lines, or more than ~8 `input()`/`input.required()` declarations — skipped entirely in `.spec.ts`/`.test.ts` files. | Move HTTP into a service; split the component; collapse many scalar inputs into one object input. | none |
 
 ## Version awareness
 
@@ -201,10 +201,17 @@ the drift checks described above (`R2`, and its sibling `S2`/`S3` that keep skil
 
 To disable a rule, edit `hooks/hooks.json` directly — there's no separate config file or
 settings key to touch. The simplest disable is to remove or comment out the whole
-`PreToolUse`/`PostToolUse` entry for the mode you don't want; to disable a single rule
-inside a mode, edit the corresponding `check_ngNNN`/BGNNN block in `scripts/hook-lint.sh`
-or `scripts/bash-guard.sh` (e.g. wrap the body in `return 0` or delete the call from the
-driver list at the bottom of the file).
+`PreToolUse`/`PostToolUse` entry for the mode you don't want.
+
+To disable a single rule instead:
+
+- In `scripts/hook-lint.sh`, each rule is its own `check_ngNNN()` function called from the
+  driver list at the bottom of the file — either wrap the function body in `return 0` or
+  delete its call from that list.
+- In `scripts/bash-guard.sh`, there is no per-rule function and no driver list — each
+  BGNNN rule is a standalone inline `if`/`case` block that calls `add` directly. To
+  disable one, comment out or remove that block itself (it's marked with a `# BG00N —`
+  comment immediately above it).
 
 **NG010 is the likeliest source of false positives.** A long-lived root-service
 subscription that's meant to live for the app's whole lifetime (a global event bus, a
@@ -225,12 +232,17 @@ recall for being dependency-free and fast. Known false negatives:
   `takeUntil(`, `take(`, `first(`, `firstValueFrom`, `lastValueFrom`) is matched as plain
   substrings anywhere in the preceding chain — a coincidental match (e.g. a comment-like
   string literal containing `take(`) would suppress a real finding.
-- **NG004** and **NG103** use single-line/simple patterns for their triggers
-  (`constructor(...)` parameter matching, `@Injectable({ providedIn: 'root' })` on one
-  balanced brace) and can miss constructs whose braces or default-value expressions span
-  lines in unusual ways — for example, a constructor parameter with a default value that
-  itself contains parentheses before the injected parameter can shift where NG004's
-  paren-matching ends.
+- **NG004** matches against `$COLLAPSED` (the newline-flattened copy of the file), so a
+  constructor split across multiple lines is not the problem. Its real limitation is a
+  default-value expression that contains its own parentheses *before* the injected
+  parameter — e.g. `constructor(fn = () => 1, private http: HttpClient) {}` — which
+  closes the rule's `[^)]*` match at the default value's `)` and leaves the injected
+  parameter after it unseen (a documented, deliberate trade-off: a missed detection is
+  recoverable in review, a blocked correct write is not).
+- **NG103** greps `$CODE_PATH` line-by-line with no multiline flag, so — unlike NG004 —
+  it genuinely can miss a `@Injectable({ providedIn: 'root' })` whose braces are split
+  across lines in a way that puts `providedIn` on a different line than the pattern
+  expects.
 - An **unterminated `<!--` or `/*`** in a source file causes the comment stripper to
   swallow everything after it as "inside a comment," which can hide real violations
   later in the same file (a false negative, not a false positive) — always a symptom of
