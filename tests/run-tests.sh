@@ -502,6 +502,42 @@ expect B26-unqualified-force-ok-detached-head 0 none ""
 
 ###############################################################################
 echo
+echo "== hooks.json wiring =="
+###############################################################################
+
+W1_OK=0
+python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$ROOT/hooks/hooks.json" 2>/dev/null || W1_OK=1
+check W1-hooks-json-parses "hooks.json is valid JSON" "$W1_OK"
+
+W2_OK=0
+python3 - "$ROOT" <<'PY' 2>/dev/null || W2_OK=1
+import json, os, re, sys
+root = sys.argv[1]
+d = json.load(open(os.path.join(root, "hooks", "hooks.json")))["hooks"]
+for ev in ("SessionStart", "PreToolUse", "PostToolUse", "SubagentStart"):
+    assert ev in d, "missing event: " + ev
+cmds = [h["command"] for groups in d.values() for g in groups for h in g["hooks"]]
+assert len(cmds) == 5, "expected 5 hook commands, got %d" % len(cmds)
+for c in cmds:
+    assert "${CLAUDE_PLUGIN_ROOT}" in c, "hook not using CLAUDE_PLUGIN_ROOT: " + c
+    for script in re.findall(r"\$\{CLAUDE_PLUGIN_ROOT\}/([A-Za-z0-9_./-]+)", c):
+        p = os.path.join(root, script)
+        assert os.path.exists(p), "referenced script missing: " + script
+        assert os.access(p, os.X_OK), "referenced script not executable: " + script
+matchers = sorted(g.get("matcher", "") for g in d["PreToolUse"])
+assert matchers == ["Bash", "Write|Edit"], matchers
+PY
+check W2-hooks-wiring "5 commands, CLAUDE_PLUGIN_ROOT paths, scripts exist and are executable" "$W2_OK"
+
+W3_OK=0
+run "" bash "$SUBAGENT"
+[ "$CODE" = "0" ] || W3_OK=1
+printf '%s' "$OUT" | grep -q "NG001" || W3_OK=1
+printf '%s' "$OUT" | grep -qF "inject()" || W3_OK=1
+check W3-subagent-rules "subagent-rules emits rules on stdout, exit 0" "$W3_OK"
+
+###############################################################################
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || { printf '  - %s\n' "${FAILED_NAMES[@]}"; exit 1; }
 exit 0
