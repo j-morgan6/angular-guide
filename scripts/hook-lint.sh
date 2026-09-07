@@ -129,6 +129,12 @@ is_spec() { printf '%s' "$FILE_PATH" | grep -qE '\.spec\.ts$|\.test\.ts$'; }
 FINDINGS=()
 add() { FINDINGS+=("$1"); }
 
+# Version thresholds expressed through the profile's derived gates:
+#   standalone_default is true exactly when major >= 20
+#   onpush_default     is true exactly when major >= 22
+gate_v20() { gate standalone_default; }
+gate_v22() { gate onpush_default; }
+
 # Content with // and /* */ comments stripped, so rules never fire on prose.
 # CODE_PATH must only ever be a path WE created via mktemp — never CONTENT_PATH
 # or FILE_PATH. If mktemp fails (e.g. a full or unwritable TMPDIR), we must
@@ -152,6 +158,19 @@ def strip_comments(src):
         c = src[i]
         nxt = src[i + 1] if i + 1 < n else ""
         if in_str:
+            # Inside a backtick (template-literal) string, an HTML comment
+            # can still appear -- this is exactly where Angular inline
+            # template markup lives -- so blank it here too, the same as
+            # at the top level, instead of leaving it intact just because
+            # it is inside a string.
+            if in_str == "`" and src[i:i + 4] == "<!--":
+                i += 4
+                while i < n and src[i:i + 3] != "-->":
+                    if src[i] == "\n":
+                        out.append("\n")
+                    i += 1
+                i += 3
+                continue
             out.append(c)
             if c == "\\" and i + 1 < n:
                 out.append(src[i + 1])
@@ -165,6 +184,14 @@ def strip_comments(src):
             in_str = c
             out.append(c)
             i += 1
+            continue
+        if src[i:i + 4] == "<!--":
+            i += 4
+            while i < n and src[i:i + 3] != "-->":
+                if src[i] == "\n":
+                    out.append("\n")
+                i += 1
+            i += 3
             continue
         if c == "/" and nxt == "/":
             i += 2
@@ -190,7 +217,95 @@ else
   CODE_PATH="$CONTENT_PATH"
 fi
 
+# Single-line copy of the code, for rules that must match across newlines.
+COLLAPSED=$(tr '\n' ' ' < "$CODE_PATH" 2>/dev/null)
+
 # ------------------------------------------------------------- pre: NG001-018
+
+check_ng001() {
+  gate_v20 || return 0
+  [ "$EXT" = "ts" ] || return 0
+  if grep -qE 'standalone:[[:space:]]*true' "$CODE_PATH" 2>/dev/null; then
+    add '🚫 NG001: `standalone: true` in a decorator.
+   💡 Fix: Delete the property. Standalone is the default since Angular v20 — writing it is redundant and signals a pre-v20 mental model.
+   See: angular-essentials skill'
+  fi
+}
+
+check_ng002() {
+  gate_v20 || return 0
+  [ "$EXT" = "ts" ] || return 0
+  if grep -q '@NgModule' "$CODE_PATH" 2>/dev/null; then
+    add '🚫 NG002: `@NgModule` declaration.
+   💡 Fix: Use standalone components. Put shared providers in `providers` at bootstrap or on a route, and import components directly via the `imports` array.
+   See: angular-essentials skill'
+  fi
+}
+
+check_ng003() {
+  gate_v20 || return 0
+  if grep -qE '\*ngIf|\*ngFor|\*ngSwitch|\[ngSwitch\]' "$CODE_PATH" 2>/dev/null; then
+    add '🚫 NG003: Legacy structural directive (`*ngIf` / `*ngFor` / `*ngSwitch`).
+   💡 Fix: Use native control flow — `@if (cond) { }`, `@for (x of xs; track x.id) { }`, `@switch (v) { @case (a) { } }`. It needs no imports, is faster, and is the only supported form going forward.
+   See: angular-essentials skill'
+  fi
+}
+
+check_ng004() {
+  gate_v20 || return 0
+  [ "$EXT" = "ts" ] || return 0
+  if printf '%s' "$COLLAPSED" \
+     | grep -qE 'constructor[[:space:]]*\([^)]*\b(private|public|protected|readonly)[[:space:]]+[A-Za-z_$][A-Za-z0-9_$]*[[:space:]]*:'; then
+    add '🚫 NG004: Constructor-parameter dependency injection.
+   💡 Fix: Use the `inject()` function at field level:
+     private readonly http = inject(HttpClient);
+   It gives better type inference, works in field initializers and functional guards/interceptors, and avoids inheritance boilerplate.
+   See: angular-essentials skill'
+  fi
+}
+
+check_ng005() {
+  gate_v20 || return 0
+  [ "$EXT" = "ts" ] || return 0
+  if grep -qE '@Input[[:space:]]*\(|@Output[[:space:]]*\(' "$CODE_PATH" 2>/dev/null; then
+    add '🚫 NG005: `@Input()` / `@Output()` decorator.
+   💡 Fix: Use the signal-based functions:
+     readonly name = input.required<string>();
+     readonly saved = output<Item>();
+     readonly value = model<string>("");
+   Signal inputs are readable in computed() without a lifecycle hook.
+   See: angular-essentials skill'
+  fi
+}
+
+check_ng006() {
+  gate_v22 || return 0
+  [ "$EXT" = "ts" ] || return 0
+  if grep -qE 'changeDetection:[[:space:]]*ChangeDetectionStrategy\.OnPush' "$CODE_PATH" 2>/dev/null; then
+    add '🚫 NG006: Explicit `changeDetection: ChangeDetectionStrategy.OnPush`.
+   💡 Fix: Delete the property and its import. OnPush is the default strategy in Angular v22 — setting it explicitly is now noise.
+   See: performance-and-zoneless skill'
+  fi
+}
+
+check_ng008() {
+  if grep -qE '\[ngClass\]|\[ngStyle\]|[[:space:]]ngClass=|[[:space:]]ngStyle=' "$CODE_PATH" 2>/dev/null; then
+    add '🚫 NG008: `ngClass` / `ngStyle`.
+   💡 Fix: Use native bindings — `[class.active]="isActive()"`, `[style.width.px]="w()"`, or `[class]="classRecord()"`. They need no import and avoid an extra directive instance per element.
+   See: angular-essentials skill'
+  fi
+}
+
+check_ng009() {
+  [ "$EXT" = "ts" ] || return 0
+  if grep -qE '@HostBinding|@HostListener' "$CODE_PATH" 2>/dev/null; then
+    add '🚫 NG009: `@HostBinding` / `@HostListener` decorator.
+   💡 Fix: Use the `host` object in the decorator metadata:
+     @Component({ host: { "[class.active]": "isActive()", "(click)": "onClick($event)" } })
+   It keeps host behaviour in one place and is statically analysable.
+   See: angular-essentials skill'
+  fi
+}
 
 check_ng007() {
   if grep -qE '(:[[:space:]]*any\b|\bas[[:space:]]+any\b|<any>)' "$CODE_PATH" 2>/dev/null; then
@@ -203,7 +318,15 @@ check_ng007() {
 # -------------------------------------------------------------------- driver
 
 if [ "$MODE" = "pre" ]; then
+  check_ng001
+  check_ng002
+  check_ng003
+  check_ng004
+  check_ng005
+  check_ng006
   check_ng007
+  check_ng008
+  check_ng009
 else
   :
 fi

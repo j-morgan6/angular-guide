@@ -596,6 +596,115 @@ check W4-hook-mode-wiring "each event+matcher invokes the right script with the 
 
 ###############################################################################
 echo
+echo "== NG001-NG009 (legacy Angular) =="
+###############################################################################
+
+V22="$TMPROOT/ng22"; ng_workspace "$V22" "22.0.0"; mkdir -p "$V22/src/app"
+cd "$V22" || exit 1; bash "$DETECT" >/dev/null 2>&1
+
+V21="$TMPROOT/ng21"; ng_workspace "$V21" "21.0.0"; mkdir -p "$V21/src/app"
+cd "$V21" || exit 1; bash "$DETECT" >/dev/null 2>&1
+
+UNK="$TMPROOT/ngunk"; mkdir -p "$UNK/src/app"
+printf '{"version":1,"projects":{}}\n' > "$UNK/angular.json"
+printf '{"name":"x","dependencies":{}}\n' > "$UNK/package.json"
+cd "$UNK" || exit 1; bash "$DETECT" >/dev/null 2>&1
+
+cd "$V22" || exit 1
+
+# NG001 standalone: true
+run "$(write_json "$V22/src/app/a.ts" '@Component({ selector: "app-a", standalone: true, template: "" })
+export class A {}')" bash "$HOOK_LINT" pre
+expect N001-fires 2 err "NG001"
+
+run "$(write_json "$V22/src/app/a.ts" '@Component({ selector: "app-a", template: "" })
+export class A {}')" bash "$HOOK_LINT" pre
+expect N001-silent 0 none ""
+
+# NG002 @NgModule
+run "$(write_json "$V22/src/app/m.ts" '@NgModule({ declarations: [] })
+export class M {}')" bash "$HOOK_LINT" pre
+expect N002-fires 2 err "NG002"
+
+# NG003 structural directives — template file and inline template
+run "$(write_json "$V22/src/app/a.html" '<div *ngIf="ready">hi</div>')" bash "$HOOK_LINT" pre
+expect N003-html-ngif 2 err "NG003"
+
+run "$(write_json "$V22/src/app/a.html" '<li *ngFor="let x of xs">{{x}}</li>')" bash "$HOOK_LINT" pre
+expect N003-html-ngfor 2 err "NG003"
+
+run "$(write_json "$V22/src/app/a.ts" '@Component({ template: `<div *ngIf="ready"></div>` })
+export class A {}')" bash "$HOOK_LINT" pre
+expect N003-inline-template 2 err "NG003"
+
+run "$(write_json "$V22/src/app/a.html" '@if (ready) { <div>hi</div> }')" bash "$HOOK_LINT" pre
+expect N003-silent 0 none ""
+
+# NG004 constructor-parameter DI, including the multi-line form
+run "$(write_json "$V22/src/app/s.ts" 'export class S {
+  constructor(
+    private http: HttpClient,
+    private router: Router,
+  ) {}
+}')" bash "$HOOK_LINT" pre
+expect N004-multiline 2 err "NG004"
+
+run "$(write_json "$V22/src/app/s.ts" 'export class S {
+  private http = inject(HttpClient);
+}')" bash "$HOOK_LINT" pre
+expect N004-silent 0 none ""
+
+# A plain constructor with no access modifier is not injection
+run "$(write_json "$V22/src/app/p.ts" 'export class P {
+  constructor(name: string) { this.name = name; }
+}')" bash "$HOOK_LINT" pre
+expect N004-plain-ctor-ok 0 none ""
+
+# NG005 decorators
+run "$(write_json "$V22/src/app/a.ts" 'export class A { @Input() name!: string; }')" bash "$HOOK_LINT" pre
+expect N005-input 2 err "NG005"
+
+run "$(write_json "$V22/src/app/a.ts" 'export class A { @Output() saved = new EventEmitter(); }')" bash "$HOOK_LINT" pre
+expect N005-output 2 err "NG005"
+
+run "$(write_json "$V22/src/app/a.ts" 'export class A { readonly name = input.required<string>(); }')" bash "$HOOK_LINT" pre
+expect N005-silent 0 none ""
+
+# NG006 explicit OnPush — v22 only
+run "$(write_json "$V22/src/app/a.ts" '@Component({ changeDetection: ChangeDetectionStrategy.OnPush, template: "" })
+export class A {}')" bash "$HOOK_LINT" pre
+expect N006-fires-on-v22 2 err "NG006"
+
+cd "$V21" || exit 1
+run "$(write_json "$V21/src/app/a.ts" '@Component({ changeDetection: ChangeDetectionStrategy.OnPush, template: "" })
+export class A {}')" bash "$HOOK_LINT" pre
+expect N006-silent-on-v21 0 none ""
+
+# Gate discipline: unknown version silences every gated rule
+cd "$UNK" || exit 1
+run "$(write_json "$UNK/src/app/a.ts" '@Component({ standalone: true, template: "" })
+export class A {}')" bash "$HOOK_LINT" pre
+expect N001-silent-unknown-version 0 none ""
+
+cd "$V22" || exit 1
+
+# NG008 ngClass / ngStyle
+run "$(write_json "$V22/src/app/a.html" '<div [ngClass]="{ active: on }"></div>')" bash "$HOOK_LINT" pre
+expect N008-ngclass 2 err "NG008"
+
+run "$(write_json "$V22/src/app/a.html" '<div [class.active]="on"></div>')" bash "$HOOK_LINT" pre
+expect N008-silent 0 none ""
+
+# NG009 host decorators
+run "$(write_json "$V22/src/app/a.ts" 'export class A { @HostListener("click") onClick() {} }')" bash "$HOOK_LINT" pre
+expect N009-hostlistener 2 err "NG009"
+
+run "$(write_json "$V22/src/app/a.ts" '@Component({ host: { "(click)": "onClick()" }, template: "" })
+export class A {}')" bash "$HOOK_LINT" pre
+expect N009-silent 0 none ""
+
+###############################################################################
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || { printf '  - %s\n' "${FAILED_NAMES[@]}"; exit 1; }
 exit 0
