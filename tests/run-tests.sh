@@ -1055,6 +1055,32 @@ check R4-template-gitignore "CLAUDE.md.template tells users to gitignore the pro
 
 ###############################################################################
 echo
+echo "== C1: file_path newline injection (arbitrary file deletion) =="
+###############################################################################
+
+# The embedded python communicated fp/tp back to bash as two stdout lines
+# read with `sed -n '1p'`/`sed -n '2p'`. A file_path containing a newline
+# shifted that protocol: CONTENT_PATH became the newline-split second
+# segment -- an attacker-chosen RELATIVE path -- and the cleanup trap's
+# alias guard only compared against FILE_PATH, so `rm -f "$CODE_PATH"`
+# deleted it. file_path is model-authored, so this is reachable from prompt
+# injection with no rule needing to fire. Reproduces against a decoy file in
+# the cwd: must exit 0 AND leave the decoy untouched.
+C1_DIR="$TMPROOT/c1"; mkdir -p "$C1_DIR"
+cd "$C1_DIR" || exit 1
+printf '%s' "decoy-content" > decoy.ts
+C1_FP=$'/tmp/angular-guide-c1-nonexistent/x.ts\ndecoy.ts'
+run "$(write_json "$C1_FP" 'const x = 1;')" bash "$HOOK_LINT" pre
+C1_OK=0
+[ "$CODE" = "0" ] || C1_OK=1
+[ -f "$C1_DIR/decoy.ts" ] || C1_OK=1
+[ "$(cat "$C1_DIR/decoy.ts" 2>/dev/null)" = "decoy-content" ] || C1_OK=1
+check C1-newline-filepath-no-deletion "newline-bearing file_path: exit 0, decoy file in cwd survives" "$C1_OK"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || { printf '  - %s\n' "${FAILED_NAMES[@]}"; exit 1; }
 exit 0

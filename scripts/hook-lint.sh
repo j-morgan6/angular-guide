@@ -25,10 +25,25 @@ INPUT=$(cat)
 
 case "$MODE" in pre|post) ;; *) exit 0 ;; esac
 
-DATA=$(printf '%s' "$INPUT" | python3 -c '
+# The fp/tp handoff below is NOT done via a two-line stdout capture: a `$()`
+# command substitution cannot hold a NUL byte (bash truncates the captured
+# string at the first one), which is exactly why NUL is a safe field
+# separator for filesystem paths -- a legitimate path can never contain one.
+# So the two paths are written NUL-delimited into a small meta file created
+# entirely by this script (its path is never attacker-influenced), and read
+# back from that file with `read -d ''`, not through a captured string.
+# (This is the fix for the second instance of this bug class in this file;
+# the first, a plain-newline split of a two-line stdout protocol, was fixed
+# in c805f35. See META_TMP below and the `file_path` newline rejection
+# inside the python pass -- that rejection happens before any temp file for
+# the content is ever created.)
+META_TMP=$(mktemp -t angular-guide-meta 2>/dev/null) || exit 0
+
+printf '%s' "$INPUT" | python3 -c '
 import json, sys, os, tempfile
 
 mode = sys.argv[1]
+meta_path = sys.argv[2]
 try:
     d = json.loads(sys.stdin.read())
 except Exception:
@@ -38,41 +53,59 @@ fp = ti.get("file_path", "") or ""
 if not fp:
     sys.exit(0)
 
+# file_path is model-authored input, reachable from prompt injection with no
+# rule needing to fire. A newline (or NUL) in it would corrupt the
+# NUL-delimited protocol below (or, before this check existed, the older
+# two-line stdout protocol) and could smuggle a second, attacker-chosen path
+# into CONTENT_PATH/CODE_PATH. Reject it outright, before touching any temp
+# file — no legitimate path ever contains one.
+if "\n" in fp or "\r" in fp or "\x00" in fp:
+    sys.exit(0)
+
 if mode == "post":
-    print(fp); print(fp); sys.exit(0)
-
-if ti.get("content") is not None:
-    content = ti["content"]
+    tp = fp
 else:
-    base = ""
-    try:
-        with open(fp, encoding="utf-8", errors="ignore") as f:
-            base = f.read()
-    except Exception:
-        pass
-    old = ti.get("old_string") or ""
-    new = ti.get("new_string") or ""
-    if old and old in base:
-        content = base.replace(old, new) if ti.get("replace_all") else base.replace(old, new, 1)
-    elif new:
-        # old_string was not found on disk. Claude Code validates old_string
-        # against the real file before ever invoking Edit, so this path is
-        # defensive-only and should not be reachable in practice. Appending
-        # new_string (rather than silently linting only the unchanged base)
-        # is the safe default: it guarantees the substance of the edit is
-        # still covered by the checks below instead of being dropped.
-        content = base + "\n" + new
+    if ti.get("content") is not None:
+        content = ti["content"]
     else:
-        content = base
+        base = ""
+        try:
+            with open(fp, encoding="utf-8", errors="ignore") as f:
+                base = f.read()
+        except Exception:
+            pass
+        old = ti.get("old_string") or ""
+        new = ti.get("new_string") or ""
+        if old and old in base:
+            content = base.replace(old, new) if ti.get("replace_all") else base.replace(old, new, 1)
+        elif new:
+            # old_string was not found on disk. Claude Code validates old_string
+            # against the real file before ever invoking Edit, so this path is
+            # defensive-only and should not be reachable in practice. Appending
+            # new_string (rather than silently linting only the unchanged base)
+            # is the safe default: it guarantees the substance of the edit is
+            # still covered by the checks below instead of being dropped.
+            content = base + "\n" + new
+        else:
+            content = base
 
-fd, tp = tempfile.mkstemp(prefix="angular-guide-hook-")
-with os.fdopen(fd, "w") as f:
-    f.write(content)
-print(fp); print(tp)
-' "$MODE" 2>/dev/null)
+    fd, tp = tempfile.mkstemp(prefix="angular-guide-hook-")
+    with os.fdopen(fd, "w") as f:
+        f.write(content)
 
-FILE_PATH=$(printf '%s\n' "$DATA" | sed -n '1p')
-CONTENT_PATH=$(printf '%s\n' "$DATA" | sed -n '2p')
+with open(meta_path, "w") as mf:
+    mf.write(fp + "\0" + tp + "\0")
+' "$MODE" "$META_TMP" 2>/dev/null
+
+FILE_PATH=""
+CONTENT_PATH=""
+if [ -s "$META_TMP" ]; then
+  exec 9< "$META_TMP"
+  IFS= read -r -d '' FILE_PATH <&9 || true
+  IFS= read -r -d '' CONTENT_PATH <&9 || true
+  exec 9<&-
+fi
+rm -f "$META_TMP"
 
 CODE_PATH=""
 # NEVER remove CODE_PATH if it turned out to alias FILE_PATH or CONTENT_PATH
