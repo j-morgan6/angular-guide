@@ -947,6 +947,7 @@ S1_OK=0
 python3 - "$ROOT" <<'PY' 2>/dev/null || S1_OK=1
 import os, re, sys, glob
 root = sys.argv[1]
+REQUIRED = ["name", "description", "file_patterns", "auto_suggest"]
 skills = sorted(glob.glob(os.path.join(root, "skills", "*", "SKILL.md")))
 assert skills, "no skills found"
 for p in skills:
@@ -958,9 +959,20 @@ for p in skills:
     name = re.search(r"^name:\s*(\S+)", fm, re.M).group(1)
     assert name == os.path.basename(os.path.dirname(p)), \
         "%s: frontmatter name %r != directory name" % (p, name)
+    # Order check: collect top-level frontmatter keys (matched at the start
+    # of a line, so a key-like substring inside a value, e.g. "name:" typed
+    # inside a description sentence, can never be mistaken for a real key),
+    # keep only the four required ones, and require they appear in the
+    # mandated relative order. Any other key a skill adds is untouched by
+    # this check -- the constraint is about the required four, not an
+    # exhaustive/forbidding schema.
+    top_level_keys = re.findall(r"^([A-Za-z_][A-Za-z0-9_]*):", fm, re.M)
+    required_in_order = [k for k in top_level_keys if k in REQUIRED]
+    assert required_in_order == REQUIRED, \
+        "%s: frontmatter keys out of order: got %r, want %r" % (p, required_in_order, REQUIRED)
     assert "RULES — Follow these with no exceptions" in txt, p + ": missing RULES section"
 PY
-check S1-skill-shape "every SKILL.md has valid frontmatter and a RULES section" "$S1_OK"
+check S1-skill-shape "every SKILL.md has valid frontmatter, ordered keys, and a RULES section" "$S1_OK"
 
 S2_OK=0
 python3 - "$ROOT" <<'PY' 2>/dev/null || S2_OK=1
