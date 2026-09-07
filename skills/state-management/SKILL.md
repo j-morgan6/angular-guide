@@ -129,7 +129,9 @@ cartStore.items.update((xs) => [...xs, item]);
 ```
 
 Any consumer can mutate `items` from anywhere, with no single place to find every way the
-cart changes. Good — the store owns every mutation path:
+cart changes.
+
+Good:
 
 ```typescript
 @Service()
