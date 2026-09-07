@@ -644,8 +644,44 @@ check_ng015() {
 check_ng016() {
   [ "$EXT" = "ts" ] || return 0
   printf '%s' "$FILE_PATH" | grep -qE '/environments?/|environment(\.[a-z]+)*\.ts$' || return 0
-  if grep -qiE '(key|secret|token|password|credential)[A-Za-z]*[[:space:]]*:[[:space:]]*["'"'"'][^"'"'"']+["'"'"']' "$CODE_PATH" 2>/dev/null \
-     && ! grep -qE 'process\.env|import\.meta\.env' "$CODE_PATH" 2>/dev/null; then
+  local rc
+  # Rewritten from two file-wide greps to a per-occurrence python scan:
+  #   - The process.env/import.meta.env exemption used to be file-wide, so
+  #     one unrelated env read anywhere in the file suppressed a real
+  #     `apiKey: "sk-live-..."` on a completely different line. It now only
+  #     exempts an occurrence that shares its OWN line with the env read.
+  #   - A value that parses as a URL (e.g. `tokenEndpoint: "https://auth/
+  #     token"`) is excluded outright -- a URL is not a secret, however
+  #     secret-shaped its key name looks.
+  # Same fail-open contract as NG010/012/013/007: read the exit code
+  # directly, do not gate with `|| return 0`.
+  python3 - "$CODE_PATH" <<'PY' 2>/dev/null
+import re, sys
+try:
+    src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
+    pattern = re.compile(
+        r'(?:key|secret|token|password|credential)[A-Za-z]*\s*:\s*(["\'])([^"\']*)\1',
+        re.IGNORECASE,
+    )
+    url_re = re.compile(r'^[A-Za-z][A-Za-z0-9+.\-]*://')
+    hit = False
+    for line in src.splitlines():
+        if "process.env" in line or "import.meta.env" in line:
+            continue
+        for m in pattern.finditer(line):
+            value = m.group(2)
+            if not value or url_re.match(value):
+                continue
+            hit = True
+            break
+        if hit:
+            break
+    sys.exit(1 if hit else 0)
+except Exception:
+    sys.exit(0)
+PY
+  rc=$?
+  if [ "$rc" -eq 1 ]; then
     add '🚫 NG016: Secret-shaped value in an environment file.
    💡 Fix: `environment.ts` is compiled into the browser bundle — anything in it is public. Move the secret behind your backend and have the client call your API. Build-time injection does not help; the value still ships.
    See: angular-essentials skill'

@@ -1263,6 +1263,30 @@ cd "$WORK" || exit 1
 
 ###############################################################################
 echo
+echo "== M8: NG016 process.env exemption is per-occurrence, URLs excluded =="
+###############################################################################
+
+cd "$V22" || exit 1
+
+# One unrelated process.env read anywhere in the file used to suppress a
+# real secret on a completely different line -- the exemption is now
+# per-line, not file-wide.
+run "$(write_json "$V22/src/environments/environment.ts" $'export const environment = {\n  featureFlag: process.env["FF"],\n  apiKey: "sk_live_abc123def456",\n};\n')" bash "$HOOK_LINT" pre
+expect M8-process-env-elsewhere-still-catches-real-secret 2 err "NG016"
+
+# ...and an occurrence that genuinely reads from process.env on its OWN
+# line is still exempt.
+run "$(write_json "$V22/src/environments/environment.ts" 'export const environment = { apiKey: process.env.API_KEY || "" };')" bash "$HOOK_LINT" pre
+expect M8-process-env-same-line-still-exempt 0 none ""
+
+# A URL is not a secret, however secret-shaped its key name looks.
+run "$(write_json "$V22/src/environments/environment.ts" 'export const environment = { tokenEndpoint: "https://auth/token" };')" bash "$HOOK_LINT" pre
+expect M8-url-value-not-a-secret 0 none ""
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
 echo "== C1: file_path newline injection (arbitrary file deletion) =="
 ###############################################################################
 
