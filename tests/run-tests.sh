@@ -940,6 +940,62 @@ check Q2-analyze-missing-file "analyze_quality.sh fails open on a missing file" 
 
 ###############################################################################
 echo
+echo "== skills =="
+###############################################################################
+
+S1_OK=0
+python3 - "$ROOT" <<'PY' 2>/dev/null || S1_OK=1
+import os, re, sys, glob
+root = sys.argv[1]
+skills = sorted(glob.glob(os.path.join(root, "skills", "*", "SKILL.md")))
+assert skills, "no skills found"
+for p in skills:
+    txt = open(p, encoding="utf-8").read()
+    assert txt.startswith("---\n"), p + ": missing frontmatter"
+    fm = txt.split("---", 2)[1]
+    for key in ("name:", "description:", "file_patterns:", "auto_suggest:"):
+        assert key in fm, "%s: frontmatter missing %s" % (p, key)
+    name = re.search(r"^name:\s*(\S+)", fm, re.M).group(1)
+    assert name == os.path.basename(os.path.dirname(p)), \
+        "%s: frontmatter name %r != directory name" % (p, name)
+    assert "RULES — Follow these with no exceptions" in txt, p + ": missing RULES section"
+PY
+check S1-skill-shape "every SKILL.md has valid frontmatter and a RULES section" "$S1_OK"
+
+S2_OK=0
+python3 - "$ROOT" <<'PY' 2>/dev/null || S2_OK=1
+import os, re, sys, glob
+root = sys.argv[1]
+lint = open(os.path.join(root, "scripts", "hook-lint.sh"), encoding="utf-8").read()
+defined = set(re.findall(r"check_(ng\d{3})\s*\(\)", lint))
+defined = {d.upper() for d in defined}
+guard = open(os.path.join(root, "scripts", "bash-guard.sh"), encoding="utf-8").read()
+defined |= set(re.findall(r"\b(BG\d{3})\b", guard))
+referenced = set()
+for p in glob.glob(os.path.join(root, "skills", "*", "SKILL.md")):
+    referenced |= set(re.findall(r"\b((?:NG|BG)\d{3})\b", open(p, encoding="utf-8").read()))
+sub = open(os.path.join(root, "scripts", "subagent-rules.sh"), encoding="utf-8").read()
+referenced |= set(re.findall(r"\b((?:NG|BG)\d{3})\b", sub))
+orphans = sorted(referenced - defined)
+assert not orphans, "rule IDs referenced but not implemented: " + ", ".join(orphans)
+PY
+check S2-no-orphan-rule-ids "every rule ID cited in a skill or subagent-rules exists in a script" "$S2_OK"
+
+S3_OK=0
+python3 - "$ROOT" <<'PY' 2>/dev/null || S3_OK=1
+import os, re, sys
+root = sys.argv[1]
+lint = open(os.path.join(root, "scripts", "hook-lint.sh"), encoding="utf-8").read()
+pre = {d.upper() for d in re.findall(r"check_(ng0\d{2})\s*\(\)", lint)}
+sub = open(os.path.join(root, "scripts", "subagent-rules.sh"), encoding="utf-8").read()
+cited = set(re.findall(r"\b(NG0\d{2})\b", sub))
+missing = sorted(pre - cited)
+assert not missing, "blocking rules absent from the subagent rule set: " + ", ".join(missing)
+PY
+check S3-subagent-covers-blocking "every blocking NG0xx rule appears in subagent-rules.sh" "$S3_OK"
+
+###############################################################################
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || { printf '  - %s\n' "${FAILED_NAMES[@]}"; exit 1; }
 exit 0
