@@ -37,7 +37,7 @@ case "$MODE" in pre|post) ;; *) exit 0 ;; esac
 # in c805f35. See META_TMP below and the `file_path` newline rejection
 # inside the python pass -- that rejection happens before any temp file for
 # the content is ever created.)
-META_TMP=$(mktemp -t angular-guide-meta 2>/dev/null) || exit 0
+META_TMP=$(mktemp "${TMPDIR:-/tmp}/angular-guide-meta.XXXXXX" 2>/dev/null) || exit 0
 
 printf '%s' "$INPUT" | python3 -c '
 import json, sys, os, tempfile
@@ -192,7 +192,7 @@ gate_v22() { gate onpush_default; }
 # Instead, degrade to reading CONTENT_PATH unmodified — matching gets
 # slightly noisier (may fire on text inside comments) but the real file is
 # never opened for writing and never removed.
-CODE_TMP=$(mktemp -t angular-guide-code 2>/dev/null) || CODE_TMP=""
+CODE_TMP=$(mktemp "${TMPDIR:-/tmp}/angular-guide-code.XXXXXX" 2>/dev/null) || CODE_TMP=""
 if [ -n "$CODE_TMP" ]; then
   CODE_PATH="$CODE_TMP"
   python3 -c '
@@ -252,7 +252,15 @@ def strip_comments(src, is_html):
         if src[i:i + 4] == "<!--":
             i = scan_delimited(src, i, 4, "-->", out)
             continue
-        if is_html and c == "<":
+        if is_html and c == "<" and (nxt.isalpha() or nxt in ("/", "!", "?")):
+            # A bare "<" surrounded by whitespace/text ("1 < 2") is a
+            # comparison in interpolated prose, not a tag opener -- only
+            # treat it as one when followed by something an actual tag,
+            # closing tag, doctype/comment, or processing instruction would
+            # start with. Without this, "<p>1 < 2 and Don'"'"'t</p>" re-enters
+            # in_tag on the bare "<", which then lets a following apostrophe
+            # open a runaway string again (the same bug class as before,
+            # just narrower).
             in_tag = True
             out.append(c)
             i += 1
