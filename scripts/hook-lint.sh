@@ -25,10 +25,25 @@ INPUT=$(cat)
 
 case "$MODE" in pre|post) ;; *) exit 0 ;; esac
 
-DATA=$(printf '%s' "$INPUT" | python3 -c '
+# The fp/tp handoff below is NOT done via a two-line stdout capture: a `$()`
+# command substitution cannot hold a NUL byte (bash truncates the captured
+# string at the first one), which is exactly why NUL is a safe field
+# separator for filesystem paths -- a legitimate path can never contain one.
+# So the two paths are written NUL-delimited into a small meta file created
+# entirely by this script (its path is never attacker-influenced), and read
+# back from that file with `read -d ''`, not through a captured string.
+# (This is the fix for the second instance of this bug class in this file;
+# the first, a plain-newline split of a two-line stdout protocol, was fixed
+# in c805f35. See META_TMP below and the `file_path` newline rejection
+# inside the python pass -- that rejection happens before any temp file for
+# the content is ever created.)
+META_TMP=$(mktemp "${TMPDIR:-/tmp}/angular-guide-meta.XXXXXX" 2>/dev/null) || exit 0
+
+printf '%s' "$INPUT" | python3 -c '
 import json, sys, os, tempfile
 
 mode = sys.argv[1]
+meta_path = sys.argv[2]
 try:
     d = json.loads(sys.stdin.read())
 except Exception:
@@ -38,41 +53,59 @@ fp = ti.get("file_path", "") or ""
 if not fp:
     sys.exit(0)
 
+# file_path is model-authored input, reachable from prompt injection with no
+# rule needing to fire. A newline (or NUL) in it would corrupt the
+# NUL-delimited protocol below (or, before this check existed, the older
+# two-line stdout protocol) and could smuggle a second, attacker-chosen path
+# into CONTENT_PATH/CODE_PATH. Reject it outright, before touching any temp
+# file — no legitimate path ever contains one.
+if "\n" in fp or "\r" in fp or "\x00" in fp:
+    sys.exit(0)
+
 if mode == "post":
-    print(fp); print(fp); sys.exit(0)
-
-if ti.get("content") is not None:
-    content = ti["content"]
+    tp = fp
 else:
-    base = ""
-    try:
-        with open(fp, encoding="utf-8", errors="ignore") as f:
-            base = f.read()
-    except Exception:
-        pass
-    old = ti.get("old_string") or ""
-    new = ti.get("new_string") or ""
-    if old and old in base:
-        content = base.replace(old, new) if ti.get("replace_all") else base.replace(old, new, 1)
-    elif new:
-        # old_string was not found on disk. Claude Code validates old_string
-        # against the real file before ever invoking Edit, so this path is
-        # defensive-only and should not be reachable in practice. Appending
-        # new_string (rather than silently linting only the unchanged base)
-        # is the safe default: it guarantees the substance of the edit is
-        # still covered by the checks below instead of being dropped.
-        content = base + "\n" + new
+    if ti.get("content") is not None:
+        content = ti["content"]
     else:
-        content = base
+        base = ""
+        try:
+            with open(fp, encoding="utf-8", errors="ignore") as f:
+                base = f.read()
+        except Exception:
+            pass
+        old = ti.get("old_string") or ""
+        new = ti.get("new_string") or ""
+        if old and old in base:
+            content = base.replace(old, new) if ti.get("replace_all") else base.replace(old, new, 1)
+        elif new:
+            # old_string was not found on disk. Claude Code validates old_string
+            # against the real file before ever invoking Edit, so this path is
+            # defensive-only and should not be reachable in practice. Appending
+            # new_string (rather than silently linting only the unchanged base)
+            # is the safe default: it guarantees the substance of the edit is
+            # still covered by the checks below instead of being dropped.
+            content = base + "\n" + new
+        else:
+            content = base
 
-fd, tp = tempfile.mkstemp(prefix="angular-guide-hook-")
-with os.fdopen(fd, "w") as f:
-    f.write(content)
-print(fp); print(tp)
-' "$MODE" 2>/dev/null)
+    fd, tp = tempfile.mkstemp(prefix="angular-guide-hook-")
+    with os.fdopen(fd, "w") as f:
+        f.write(content)
 
-FILE_PATH=$(printf '%s\n' "$DATA" | sed -n '1p')
-CONTENT_PATH=$(printf '%s\n' "$DATA" | sed -n '2p')
+with open(meta_path, "w") as mf:
+    mf.write(fp + "\0" + tp + "\0")
+' "$MODE" "$META_TMP" 2>/dev/null
+
+FILE_PATH=""
+CONTENT_PATH=""
+if [ -s "$META_TMP" ]; then
+  exec 9< "$META_TMP"
+  IFS= read -r -d '' FILE_PATH <&9 || true
+  IFS= read -r -d '' CONTENT_PATH <&9 || true
+  exec 9<&-
+fi
+rm -f "$META_TMP"
 
 CODE_PATH=""
 # NEVER remove CODE_PATH if it turned out to alias FILE_PATH or CONTENT_PATH
@@ -111,6 +144,21 @@ find_profile() {
 }
 PROFILE=$(find_profile 2>/dev/null || true)
 
+# I6: NG007/008/009/010/011/012/014/015 have no version gate, so without
+# this check they would fire in any .ts file in any repository at all — a
+# plain Express file in a non-Angular repo would get blocked. No cached
+# profile anywhere up the tree means detect_project.sh never found an
+# angular.json here, i.e. this is not an Angular workspace (or the plugin
+# is simply inert here), so the whole hook does nothing.
+#
+# A profile that DOES exist but reports angular_major "unknown" is a
+# different case: detect_project.sh found both angular.json and
+# package.json, so this genuinely IS an Angular workspace — the version
+# just couldn't be resolved. Ungated rules still apply there; only the
+# version-gated rules stay off, exactly as before (gate()/gate_eq() already
+# return false for an unresolved version, unchanged by this check).
+[ -n "${PROFILE:-}" ] && [ -f "$PROFILE" ] || exit 0
+
 # gate <boolean-key> — true only when the profile explicitly says true.
 # A missing profile or unknown version means the rule is SKIPPED, never guessed.
 gate() {
@@ -144,16 +192,42 @@ gate_v22() { gate onpush_default; }
 # Instead, degrade to reading CONTENT_PATH unmodified — matching gets
 # slightly noisier (may fire on text inside comments) but the real file is
 # never opened for writing and never removed.
-CODE_TMP=$(mktemp -t angular-guide-code 2>/dev/null) || CODE_TMP=""
+CODE_TMP=$(mktemp "${TMPDIR:-/tmp}/angular-guide-code.XXXXXX" 2>/dev/null) || CODE_TMP=""
 if [ -n "$CODE_TMP" ]; then
   CODE_PATH="$CODE_TMP"
   python3 -c '
 import sys
 
-def strip_comments(src):
+def scan_delimited(src, i, opener_len, end_marker, out):
+    # Skip content starting right after the opener (src[i:i+opener_len]),
+    # looking for end_marker. If found, blank the content between (newlines
+    # preserved for line-accounting) and return the index just past
+    # end_marker. If end_marker is NEVER found anywhere in the rest of the
+    # source -- an unterminated /* or <!-- -- swallowing everything after it
+    # as "inside a comment" would silently disable every rule for the whole
+    # rest of the file, which is a much worse failure mode than the syntax
+    # error it reflects. So only the remainder of THIS LINE is treated as
+    # commented; the newline itself is left for the caller to append
+    # normally, and scanning resumes as usual from the next line.
+    n = len(src)
+    j = i + opener_len
+    close = src.find(end_marker, j)
+    if close != -1:
+        for k in range(j, close):
+            if src[k] == "\n":
+                out.append("\n")
+        return close + len(end_marker)
+    nl = src.find("\n", j)
+    return n if nl == -1 else nl
+
+def strip_comments(src, is_html):
     out = []
     i, n = 0, len(src)
     in_str = None   # None, or the quote character ("\x27", "\"", "`") we are inside
+    # in_tag is only meaningful for HTML content: true while scanning inside
+    # a <tag ...> construct (between an opening "<" and its closing ">"), as
+    # opposed to text content between tags.
+    in_tag = False
     while i < n:
         c = src[i]
         nxt = src[i + 1] if i + 1 < n else ""
@@ -164,12 +238,7 @@ def strip_comments(src):
             # at the top level, instead of leaving it intact just because
             # it is inside a string.
             if in_str == "`" and src[i:i + 4] == "<!--":
-                i += 4
-                while i < n and src[i:i + 3] != "-->":
-                    if src[i] == "\n":
-                        out.append("\n")
-                    i += 1
-                i += 3
+                i = scan_delimited(src, i, 4, "-->", out)
                 continue
             out.append(c)
             if c == "\\" and i + 1 < n:
@@ -180,18 +249,48 @@ def strip_comments(src):
                 in_str = None
             i += 1
             continue
-        if c in ("\"", "\x27", "`"):
-            in_str = c
+        if src[i:i + 4] == "<!--":
+            i = scan_delimited(src, i, 4, "-->", out)
+            continue
+        if is_html and c == "<" and (nxt.isalpha() or nxt in ("/", "!", "?")):
+            # A bare "<" surrounded by whitespace/text ("1 < 2") is a
+            # comparison in interpolated prose, not a tag opener -- only
+            # treat it as one when followed by something an actual tag,
+            # closing tag, doctype/comment, or processing instruction would
+            # start with. Without this, "<p>1 < 2 and Don'"'"'t</p>" re-enters
+            # in_tag on the bare "<", which then lets a following apostrophe
+            # open a runaway string again (the same bug class as before,
+            # just narrower).
+            in_tag = True
             out.append(c)
             i += 1
             continue
-        if src[i:i + 4] == "<!--":
-            i += 4
-            while i < n and src[i:i + 3] != "-->":
-                if src[i] == "\n":
-                    out.append("\n")
+        if is_html and c == ">" and in_tag:
+            in_tag = False
+            out.append(c)
+            i += 1
+            continue
+        if c in ("\"", "\x27", "`"):
+            # In HTML content, a quote is only a string delimiter INSIDE a
+            # tag (an attribute value) -- at top level, in text content, a
+            # bare apostrophe ("Don'"'"'t do this") is prose, not the start of a
+            # string literal. Before this check, an apostrophe in HTML text
+            # would flip in_str on with no matching close anywhere in the
+            # file, trapping the scanner in "inside a string" for the rest
+            # of the file -- which meant the <!-- --> handling above (only
+            # reachable when not in_str) never ran again, so a real comment
+            # later in the file was never blanked and its contents (e.g. a
+            # commented-out *ngIf) fired a false positive. .ts content is
+            # unaffected: is_html is only true for .html files, so a
+            # top-level quote there still always opens a real string
+            # literal, exactly as before.
+            if c != "`" and is_html and not in_tag:
+                out.append(c)
                 i += 1
-            i += 3
+                continue
+            in_str = c
+            out.append(c)
+            i += 1
             continue
         if c == "/" and nxt == "/":
             i += 2
@@ -199,20 +298,16 @@ def strip_comments(src):
                 i += 1
             continue
         if c == "/" and nxt == "*":
-            i += 2
-            while i < n and not (src[i] == "*" and i + 1 < n and src[i + 1] == "/"):
-                if src[i] == "\n":
-                    out.append("\n")
-                i += 1
-            i += 2
+            i = scan_delimited(src, i, 2, "*/", out)
             continue
         out.append(c)
         i += 1
     return "".join(out)
 
 src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
-open(sys.argv[2], "w").write(strip_comments(src))
-' "$CONTENT_PATH" "$CODE_PATH" 2>/dev/null || cp "$CONTENT_PATH" "$CODE_PATH" 2>/dev/null
+is_html = sys.argv[3] == "html"
+open(sys.argv[2], "w").write(strip_comments(src, is_html))
+' "$CONTENT_PATH" "$CODE_PATH" "$EXT" 2>/dev/null || cp "$CONTENT_PATH" "$CODE_PATH" 2>/dev/null
 else
   CODE_PATH="$CONTENT_PATH"
 fi
@@ -322,7 +417,58 @@ check_ng009() {
 }
 
 check_ng007() {
-  if grep -qE '(:[[:space:]]*any\b|\bas[[:space:]]+any\b|<any>)' "$CODE_PATH" 2>/dev/null; then
+  # Unlike NG005/NG009/NG011, this rule used to have no extension guard, so
+  # it ran on .html templates too (e.g. "Pick a size: any of these will
+  # do."). Restrict it to .ts, matching the other type-level rules.
+  [ "$EXT" = "ts" ] || return 0
+  local rc
+  # `any` the TYPE must not fire on `any` the WORD sitting inside a string
+  # literal (e.g. `"expected type: any but got string"`). $CODE_PATH already
+  # has comments stripped but NOT string content blanked -- that stripper is
+  # shared by all 24 rules and deliberately preserves string content (see
+  # H12/H13: a `//` or `https://` inside a string must not be misread as a
+  # comment start). So this reuses that same quote-tracking state machine as
+  # a second, NG007-local pass that additionally blanks string-literal
+  # content before matching, rather than writing an unrelated second
+  # scanner. Same fail-open contract as NG010/NG012/NG013: read the exit
+  # code directly, do not gate with `|| return 0`.
+  python3 - "$CODE_PATH" <<'PY' 2>/dev/null
+import re, sys
+try:
+    src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
+    out = []
+    i, n = 0, len(src)
+    in_str = None  # None, or the quote character ("'", '"', "`") we are inside
+    while i < n:
+        c = src[i]
+        if in_str:
+            if c == "\\" and i + 1 < n:
+                out.append("  ")
+                i += 2
+                continue
+            if c == in_str:
+                in_str = None
+                out.append(c)
+                i += 1
+                continue
+            out.append(c if c == "\n" else " ")
+            i += 1
+            continue
+        if c in ("\"", "\x27", "`"):
+            in_str = c
+            out.append(c)
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    blanked = "".join(out)
+    hit = bool(re.search(r"(:\s*any\b|\bas\s+any\b|<any>)", blanked))
+    sys.exit(1 if hit else 0)
+except Exception:
+    sys.exit(0)
+PY
+  rc=$?
+  if [ "$rc" -eq 1 ]; then
     add '🚫 NG007: `any` type detected.
    💡 Fix: Use `unknown` when the type is genuinely uncertain and narrow it, or give the value its real type. `any` disables every check TypeScript exists to provide.
    See: angular-essentials skill'
@@ -388,23 +534,48 @@ check_ng012() {
   # the shell must read that exit code directly rather than via `|| return 0`.
   python3 - "$CODE_PATH" <<'PY' 2>/dev/null
 import re, sys
+
+def balanced_span(s, open_paren_index):
+    # s[open_paren_index] is the "(" that opens the call; returns the index
+    # just past its matching ")".
+    depth, k, n = 0, open_paren_index, len(s)
+    while k < n:
+        if s[k] == "(":
+            depth += 1
+        elif s[k] == ")":
+            depth -= 1
+            if depth == 0:
+                return k + 1
+        k += 1
+    return n
+
 try:
     src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
     hit = False
     for m in re.finditer(r"\beffect\s*\(", src):
-        i = m.end() - 1
-        depth, j, n = 0, i, len(src)
-        while j < n:
-            if src[j] == "(":
-                depth += 1
-            elif src[j] == ")":
-                depth -= 1
-                if depth == 0:
-                    break
-            j += 1
-        body = src[i:j]
-        if re.search(r"\.(set|update)\s*\(", body):
-            hit = True
+        j = balanced_span(src, m.end() - 1)
+        body = src[m.end() - 1:j]
+
+        # untracked() is Angular's documented escape hatch for reading (or,
+        # here, writing) outside the reactive graph from inside an effect --
+        # `effect(() => { untracked(() => this.b.set(v)); })` is the
+        # sanctioned pattern, not the anti-pattern this rule exists to
+        # catch. Find every untracked(...) call's balanced-paren span within
+        # the effect body and exclude any .set(/.update( that falls inside
+        # one of them.
+        untracked_spans = []
+        for um in re.finditer(r"\buntracked\s*\(", body):
+            uend = balanced_span(body, um.end() - 1)
+            untracked_spans.append((um.start(), uend))
+
+        def in_untracked(pos):
+            return any(a <= pos < b for a, b in untracked_spans)
+
+        for sm in re.finditer(r"\.(set|update)\s*\(", body):
+            if not in_untracked(sm.start()):
+                hit = True
+                break
+        if hit:
             break
     sys.exit(1 if hit else 0)
 except Exception:
@@ -413,7 +584,7 @@ PY
   rc=$?
   if [ "$rc" -eq 1 ]; then
     add '🚫 NG012: `effect()` writes a signal.
-   💡 Fix: Effects are for side effects that leave the reactive graph — logging, third-party DOM, analytics. Derived state belongs in `computed()`; writable state derived from other signals belongs in `linkedSignal()`. Writing signals inside an effect creates feedback loops and re-entrant change detection.
+   💡 Fix: Effects are for side effects that leave the reactive graph — logging, third-party DOM, analytics. Derived state belongs in `computed()`; writable state derived from other signals belongs in `linkedSignal()`. Writing signals inside an effect creates feedback loops and re-entrant change detection. If you genuinely need to write from inside an effect, wrap that write in `untracked()` — NG012 excludes writes lexically inside an `untracked(...)` callback.
    See: signals-essentials skill'
   fi
 }
@@ -481,8 +652,44 @@ check_ng015() {
 check_ng016() {
   [ "$EXT" = "ts" ] || return 0
   printf '%s' "$FILE_PATH" | grep -qE '/environments?/|environment(\.[a-z]+)*\.ts$' || return 0
-  if grep -qiE '(key|secret|token|password|credential)[A-Za-z]*[[:space:]]*:[[:space:]]*["'"'"'][^"'"'"']+["'"'"']' "$CODE_PATH" 2>/dev/null \
-     && ! grep -qE 'process\.env|import\.meta\.env' "$CODE_PATH" 2>/dev/null; then
+  local rc
+  # Rewritten from two file-wide greps to a per-occurrence python scan:
+  #   - The process.env/import.meta.env exemption used to be file-wide, so
+  #     one unrelated env read anywhere in the file suppressed a real
+  #     `apiKey: "sk-live-..."` on a completely different line. It now only
+  #     exempts an occurrence that shares its OWN line with the env read.
+  #   - A value that parses as a URL (e.g. `tokenEndpoint: "https://auth/
+  #     token"`) is excluded outright -- a URL is not a secret, however
+  #     secret-shaped its key name looks.
+  # Same fail-open contract as NG010/012/013/007: read the exit code
+  # directly, do not gate with `|| return 0`.
+  python3 - "$CODE_PATH" <<'PY' 2>/dev/null
+import re, sys
+try:
+    src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
+    pattern = re.compile(
+        r'(?:key|secret|token|password|credential)[A-Za-z]*\s*:\s*(["\'])([^"\']*)\1',
+        re.IGNORECASE,
+    )
+    url_re = re.compile(r'^[A-Za-z][A-Za-z0-9+.\-]*://')
+    hit = False
+    for line in src.splitlines():
+        if "process.env" in line or "import.meta.env" in line:
+            continue
+        for m in pattern.finditer(line):
+            value = m.group(2)
+            if not value or url_re.match(value):
+                continue
+            hit = True
+            break
+        if hit:
+            break
+    sys.exit(1 if hit else 0)
+except Exception:
+    sys.exit(0)
+PY
+  rc=$?
+  if [ "$rc" -eq 1 ]; then
     add '🚫 NG016: Secret-shaped value in an environment file.
    💡 Fix: `environment.ts` is compiled into the browser bundle — anything in it is public. Move the secret behind your backend and have the client call your API. Build-time injection does not help; the value still ships.
    See: angular-essentials skill'

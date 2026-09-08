@@ -19,7 +19,7 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/bash-guard.sh\"",
-            "description": "BG001-BG006: force-push, removed ng flags, package-manager mismatch, hanging test runs, lockfile deletion"
+            "description": "BG001-BG006: force-push, removed ng flags, package-manager mismatch, hanging test runs, lockfile deletion, unsafe ng update --force"
           }
         ]
       },

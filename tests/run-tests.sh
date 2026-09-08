@@ -338,14 +338,26 @@ check H9-stderr-only "findings on stderr, stdout empty" "$H9_OK"
 run "$(write_json "$WORK/src/app/d.ts" 'const company = "acme"; // takes any value')" bash "$HOOK_LINT" pre
 expect H10-comment-stripped 0 none ""
 
-# H11: a failing `mktemp` (e.g. full/unwritable TMPDIR) in post mode must never
-# mangle or delete the real source file. Shadow `mktemp` on PATH with a stub
-# that always fails, rather than relying on TMPDIR/permissions tricks that
-# some platforms' mktemp ignores for `-t`.
+# H11: a failing `mktemp` (e.g. full/unwritable TMPDIR) in post mode must
+# never mangle or delete the real source file. Targets CODE_TMP specifically
+# (the comment-stripped copy), not META_TMP (the fp/tp handoff file added by
+# the C1 fix): the stub below only fails for a template containing
+# "angular-guide-code" and delegates everything else (including META_TMP's
+# "angular-guide-meta" template) to the real mktemp. If it failed
+# unconditionally, hook-lint.sh would now exit at its very first mktemp call
+# (META_TMP, before FILE_PATH/CONTENT_PATH are even known) and this fixture
+# would pass vacuously without ever reaching the CODE_TMP-failure fallback
+# path it exists to cover.
+REAL_MKTEMP="$(command -v mktemp)"
 FAKEBIN="$TMPROOT/fakebin"; mkdir -p "$FAKEBIN"
-cat > "$FAKEBIN/mktemp" <<'EOF'
+cat > "$FAKEBIN/mktemp" <<EOF
 #!/bin/sh
-exit 1
+for arg in "\$@"; do
+  case "\$arg" in
+    *angular-guide-code*) exit 1 ;;
+  esac
+done
+exec "$REAL_MKTEMP" "\$@"
 EOF
 chmod +x "$FAKEBIN/mktemp"
 
@@ -359,7 +371,7 @@ H11_OK=0
 [ "$CODE" = "0" ] || H11_OK=1
 [ -f "$WORK11/src/app/e.ts" ] || H11_OK=1
 [ "$(cat "$WORK11/src/app/e.ts" 2>/dev/null)" = "$ORIG_H11" ] || H11_OK=1
-check H11-mktemp-fail-preserves-file "post-mode mktemp failure must never mangle or delete the source file" "$H11_OK"
+check H11-mktemp-fail-preserves-file "post-mode CODE_TMP mktemp failure must never mangle or delete the source file" "$H11_OK"
 
 # H12: a `//` inside a string literal is not a comment start — the violation
 # after it on the same line must still be caught.
@@ -1052,6 +1064,328 @@ check R3-agents-readonly "3 agents, valid frontmatter, no write tools" "$R3_OK"
 R4_OK=0
 grep -q '.angular-guide-project.json' "$ROOT/CLAUDE.md.template" 2>/dev/null || R4_OK=1
 check R4-template-gitignore "CLAUDE.md.template tells users to gitignore the profile cache" "$R4_OK"
+
+###############################################################################
+echo
+echo "== I2: NG007 extension guard + string-literal awareness =="
+###############################################################################
+
+cd "$V22" || exit 1
+
+# Unlike NG005/NG009/NG011, NG007 had no [ "$EXT" = "ts" ] guard, so it ran
+# on .html templates and blocked ordinary prose containing the word "any".
+run "$(write_json "$V22/src/app/a.html" '<p>Pick a size: any of these will do.</p>')" bash "$HOOK_LINT" pre
+expect I2-html-prose-silent 0 none ""
+
+# ...and it matched "any" as a bare word anywhere, including inside a string
+# literal in a .ts file, not just the TYPE position.
+run "$(write_json "$V22/src/app/a.ts" 'export const MSG = "expected type: any but got string";')" bash "$HOOK_LINT" pre
+expect I2-string-literal-silent 0 none ""
+
+# Existing positive cases must still fire after both fixes.
+run "$(write_json "$V22/src/app/a.ts" 'const x: any = 1;')" bash "$HOOK_LINT" pre
+expect I2-type-annotation-fires 2 err "NG007"
+
+run "$(write_json "$V22/src/app/a.ts" 'const y = x as any;')" bash "$HOOK_LINT" pre
+expect I2-as-any-fires 2 err "NG007"
+
+run "$(write_json "$V22/src/app/a.ts" 'const z = <any>x;')" bash "$HOOK_LINT" pre
+expect I2-angle-any-fires 2 err "NG007"
+
+###############################################################################
+echo
+echo "== I3: apostrophe/quote must not disable HTML comment stripping =="
+###############################################################################
+
+cd "$V22" || exit 1
+
+# At top level a bare apostrophe in HTML text content ("Don't do this") used
+# to open a string literal that never found a matching close, trapping the
+# scanner in "inside a string" for the rest of the file -- so a REAL <!--
+# --> comment appearing later was never blanked, and a *ngIf sitting inside
+# it fired a false positive that blocked the write.
+run "$(write_json "$V22/src/app/a.html" '<p>Don'"'"'t do this</p>
+<!-- <div *ngIf="x"></div> -->')" bash "$HOOK_LINT" pre
+expect I3-apostrophe-then-comment-silent 0 none ""
+
+# The identical file with "Do not" (no apostrophe) was already silent --
+# pin that behavior so this fixture is a real differential, not a rule that
+# never fired either way.
+run "$(write_json "$V22/src/app/a.html" '<p>Do not do this</p>
+<!-- <div *ngIf="x"></div> -->')" bash "$HOOK_LINT" pre
+expect I3-no-apostrophe-baseline-silent 0 none ""
+
+# A real violation AFTER the apostrophe-bearing text must still fire --
+# the apostrophe must not swallow enforcement for the rest of the file
+# either (the mirror-image failure mode).
+run "$(write_json "$V22/src/app/a.html" '<p>Don'"'"'t do this</p>
+<div *ngIf="ready">hi</div>')" bash "$HOOK_LINT" pre
+expect I3-apostrophe-then-real-violation-fires 2 err "NG003"
+
+# Genuinely differential (verified against the pre-I3-fix script): an
+# apostrophe in TEXT content, followed by an ORDINARY attribute-quoted tag
+# that must still parse correctly, followed by a REAL <!-- --> comment.
+# Pre-fix, the leading apostrophe traps the scanner in a runaway string for
+# the rest of the file (the "card" attribute's quote never closes it, since
+# it's a double quote and the trap is on a single quote) -- so the real
+# comment is never recognized, and the *ngIf inside it wrongly fires.
+# Post-fix, the apostrophe is inert, the attribute quote is parsed
+# correctly on its own, and the real comment is recognized and blanked.
+# (Plain `title="<!-- fake"` with no preceding apostrophe -- the original
+# boundary case -- is unaffected by the I3 fix either way, which is why
+# that scenario alone was not a valid differential fixture for this bug.)
+run "$(write_json "$V22/src/app/a.html" $'<p>Don\'t</p>\n<div class="card"></div>\n<!-- <div *ngIf="x"></div> -->')" bash "$HOOK_LINT" pre
+expect I3-apostrophe-then-attribute-then-comment-silent 0 none ""
+
+###############################################################################
+echo
+echo "== I4: NG012 excludes writes inside untracked() =="
+###############################################################################
+
+cd "$V22" || exit 1
+
+# untracked() is Angular's documented escape hatch for writing outside the
+# reactive graph from inside an effect -- this must not fire.
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { untracked(() => this.b.set(v)); });')" bash "$HOOK_LINT" pre
+expect I4-untracked-set-silent 0 none ""
+
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { untracked(() => { this.b.update((x) => x + 1); }); });')" bash "$HOOK_LINT" pre
+expect I4-untracked-update-silent 0 none ""
+
+# A write OUTSIDE the untracked() callback, even in an effect that also
+# contains an untracked() call elsewhere, must still fire.
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { untracked(() => console.log(this.a())); this.total.set(this.a()); });')" bash "$HOOK_LINT" pre
+expect I4-write-outside-untracked-still-fires 2 err "NG012"
+
+# Known, documented limitation (not fixed): a plain Map/WeakMap .set() call
+# inside an effect is indistinguishable from a signal .set() call without
+# type information, so it is still flagged. Pinned here as a known false
+# positive rather than silently left untested.
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { this.cache.set(k, v); });')" bash "$HOOK_LINT" pre
+expect I4-plain-map-set-known-false-positive 2 err "NG012"
+
+###############################################################################
+echo
+echo "== I5: monorepo -- bounded downward search when the upward walk finds nothing =="
+###############################################################################
+
+# A monorepo with angular.json at apps/web/ and a session started at the
+# repo root: the upward walk from $PWD finds nothing, so before this fix the
+# whole plugin went silently inert (no profile, no NG001-NG006/NG013/NG102/
+# NG103). Bounded downward search should find the single angular.json and
+# write the profile there.
+I5A="$TMPROOT/i5-mono"; mkdir -p "$I5A/apps/web"
+ng_workspace "$I5A/apps/web" "22.0.0"
+cd "$I5A" || exit 1
+run "" bash "$DETECT"
+I5A_OK=0
+[ "$CODE" = "0" ] || I5A_OK=1
+[ -f "$I5A/apps/web/.angular-guide-project.json" ] || I5A_OK=1
+[ -f "$I5A/.angular-guide-project.json" ] && I5A_OK=1
+grep -q '"angular_major": 22' "$I5A/apps/web/.angular-guide-project.json" 2>/dev/null || I5A_OK=1
+check I5-monorepo-downward-search "session at repo root finds the single nested angular.json downward" "$I5A_OK"
+
+# node_modules must be pruned from the downward search -- an angular.json
+# shipped inside a dependency must never be mistaken for the workspace root.
+# The fake package ALSO gets a real package.json: without that, the
+# assertion below would pass vacuously even if pruning were broken, because
+# find_workspace_root_down would return the node_modules path but the
+# separate `[ -f "$ROOT/package.json" ]` gate would then reject it anyway
+# for missing a package.json -- the same outcome for the wrong reason. With
+# a real package.json present, "no profile is written" is genuinely
+# contingent on node_modules having been pruned from the search.
+I5B="$TMPROOT/i5-nm"; mkdir -p "$I5B/node_modules/some-pkg"
+printf '{"version":1,"projects":{}}\n' > "$I5B/node_modules/some-pkg/angular.json"
+printf '{"name":"some-pkg","dependencies":{"@angular/core":"^22.0.0"}}\n' > "$I5B/node_modules/some-pkg/package.json"
+cd "$I5B" || exit 1
+run "" bash "$DETECT"
+I5B_OK=0
+[ "$CODE" = "0" ] || I5B_OK=1
+[ ! -f "$I5B/.angular-guide-project.json" ] || I5B_OK=1
+[ ! -f "$I5B/node_modules/some-pkg/.angular-guide-project.json" ] || I5B_OK=1
+check I5b-monorepo-skips-node-modules "angular.json+package.json under node_modules is never treated as a workspace root" "$I5B_OK"
+
+# Two angular.json files at the same shallowest depth: genuinely ambiguous.
+# Writing no profile is correct -- guessing wrong would be worse than
+# staying inert.
+I5C="$TMPROOT/i5-ambig"; mkdir -p "$I5C/apps/web" "$I5C/apps/admin"
+ng_workspace "$I5C/apps/web" "22.0.0"
+ng_workspace "$I5C/apps/admin" "21.0.0"
+cd "$I5C" || exit 1
+run "" bash "$DETECT"
+I5C_OK=0
+[ "$CODE" = "0" ] || I5C_OK=1
+[ ! -f "$I5C/apps/web/.angular-guide-project.json" ] || I5C_OK=1
+[ ! -f "$I5C/apps/admin/.angular-guide-project.json" ] || I5C_OK=1
+[ ! -f "$I5C/.angular-guide-project.json" ] || I5C_OK=1
+check I5c-monorepo-ambiguous-writes-no-profile "two angular.json at the same depth -> no profile written, exit 0" "$I5C_OK"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== I6: no profile at all => plugin inert; unknown-version profile => ungated rules still run =="
+###############################################################################
+
+# Branch 1: no cached profile anywhere -- NG007 has no version gate, so
+# without this fix it fired in ANY .ts file in ANY repository, including a
+# plain non-Angular one (e.g. a bare Express project).
+I6A="$TMPROOT/i6-noprofile"; mkdir -p "$I6A/src"
+run "$(write_json "$I6A/src/index.ts" 'const x: any = 1;')" bash "$HOOK_LINT" pre
+expect I6-no-profile-inert 0 none ""
+
+# Branch 2: a profile DOES exist (angular.json + package.json were found)
+# but angular_major is "unknown" -- this genuinely IS an Angular workspace,
+# just one whose version couldn't be resolved, so ungated rules like NG007
+# must still run (unchanged from before this fix).
+I6B="$TMPROOT/i6-unknown"; mkdir -p "$I6B/src"
+printf '{"version":1,"projects":{}}\n' > "$I6B/angular.json"
+printf '{"name":"x","dependencies":{}}\n' > "$I6B/package.json"
+(cd "$I6B" && bash "$DETECT" >/dev/null 2>&1)
+run "$(write_json "$I6B/src/index.ts" 'const x: any = 1;')" bash "$HOOK_LINT" pre
+expect I6-unknown-version-ungated-fires 2 err "NG007"
+
+###############################################################################
+echo
+echo "== I7: unterminated /* or <!-- disables only that line, not the whole file =="
+###############################################################################
+
+cd "$V22" || exit 1
+
+# An unterminated /* used to swallow everything after it as "inside a
+# comment" -- a real violation on the very next line went completely
+# unenforced for the rest of the file.
+run "$(write_json "$V22/src/app/a.ts" $'/* TODO fix this later\nconst x: any = 1;\n')" bash "$HOOK_LINT" pre
+expect I7-unterminated-block-comment-still-catches-next-line 2 err "NG007"
+
+# Mirror case for HTML: an unterminated <!-- must not swallow a real
+# violation on a later line.
+run "$(write_json "$V22/src/app/a.html" $'<!-- unterminated comment\n<div *ngIf="ready">hi</div>\n')" bash "$HOOK_LINT" pre
+expect I7-unterminated-html-comment-still-catches-next-line 2 err "NG003"
+
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== BG001: fully-qualified refs/heads/main destination is caught =="
+###############################################################################
+
+cd "$GITMAIN" || exit 1
+run "$(bash_json "$PUSH $FORCE origin HEAD:refs/heads/main")" bash "$BASH_GUARD"
+expect BG001-fully-qualified-colon-refspec-dst-blocks 2 err "BG001"
+
+run "$(bash_json "$PUSH $FORCE origin refs/heads/main")" bash "$BASH_GUARD"
+expect BG001-fully-qualified-standalone-ref-blocks 2 err "BG001"
+
+run "$(bash_json "$PUSH $FORCE origin HEAD:refs/heads/feature/x")" bash "$BASH_GUARD"
+expect BG001-fully-qualified-colon-refspec-dst-feature-ok 0 none ""
+
+cd "$WORK" || exit 1
+
+###############################################################################
+echo
+echo "== M8: NG016 process.env exemption is per-occurrence, URLs excluded =="
+###############################################################################
+
+cd "$V22" || exit 1
+
+# One unrelated process.env read anywhere in the file used to suppress a
+# real secret on a completely different line -- the exemption is now
+# per-line, not file-wide.
+run "$(write_json "$V22/src/environments/environment.ts" $'export const environment = {\n  featureFlag: process.env["FF"],\n  apiKey: "sk_live_abc123def456",\n};\n')" bash "$HOOK_LINT" pre
+expect M8-process-env-elsewhere-still-catches-real-secret 2 err "NG016"
+
+# ...and an occurrence that genuinely reads from process.env on its OWN
+# line is still exempt.
+run "$(write_json "$V22/src/environments/environment.ts" 'export const environment = { apiKey: process.env.API_KEY || "" };')" bash "$HOOK_LINT" pre
+expect M8-process-env-same-line-still-exempt 0 none ""
+
+# A URL is not a secret, however secret-shaped its key name looks.
+run "$(write_json "$V22/src/environments/environment.ts" 'export const environment = { tokenEndpoint: "https://auth/token" };')" bash "$HOOK_LINT" pre
+expect M8-url-value-not-a-secret 0 none ""
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== GNU-mktemp: explicit XXXXXX templates (mktemp -t alone is BSD-only) =="
+###############################################################################
+
+# `mktemp -t <prefix>` with no X's in the template is accepted by BSD/macOS
+# mktemp but REJECTED by GNU coreutils mktemp ("too few X's in template").
+# Both META_TMP (the fp/tp handoff file) and CODE_TMP (the comment-stripped
+# copy) must use an explicit XXXXXX template, or the plugin is silently dead
+# on every Linux deployment: mktemp fails, `|| exit 0` fires immediately, and
+# every one of the 30 rules stops enforcing anything -- failing open, so it
+# never wedges a session, but it also never blocks anything again.
+#
+# Stub mktemp the way GNU coreutils actually behaves: reject any template
+# whose last path component lacks at least 3 consecutive X's, delegate to
+# the real mktemp otherwise. This is the same PATH-shadowing technique as
+# H11, generalized to reject on template SHAPE rather than failing
+# unconditionally.
+REAL_MKTEMP="$(command -v mktemp)"
+GNUBIN="$TMPROOT/gnu-mktemp"; mkdir -p "$GNUBIN"
+cat > "$GNUBIN/mktemp" <<EOF
+#!/bin/sh
+for arg in "\$@"; do
+  case "\$arg" in
+    -*) continue ;;
+  esac
+  base=\$(basename "\$arg")
+  case "\$base" in
+    *XXX*) : ;;
+    *) echo "mktemp: too few X's in template '\$arg'" >&2; exit 1 ;;
+  esac
+done
+exec "$REAL_MKTEMP" "\$@"
+EOF
+chmod +x "$GNUBIN/mktemp"
+
+cd "$V22" || exit 1
+
+# Prove it fails against the pre-fix code: a plain known violation, run
+# under the GNU-like mktemp, must still fire -- not silently pass because
+# the plugin died at its first mktemp call.
+run "$(write_json "$V22/src/app/a.ts" 'const x: any = 1;')" env PATH="$GNUBIN:$PATH" bash "$HOOK_LINT" pre
+expect GNU1-pre-mode-real-violation-still-fires 2 err "NG007"
+
+# ...and post mode (which also exercises CODE_TMP) must likewise still work.
+# post mode reads FILE_PATH straight off disk, so the file must actually be
+# written there first (mirrors the post_file() helper below, without its
+# unrelated default-PATH `run` call, which would just be overwritten here).
+printf '%s' '<img src="/assets/hero.png" alt="Hero">' > "$V22/src/app/a.html"
+run "$(write_json "$V22/src/app/a.html" '<img src="/assets/hero.png" alt="Hero">')" env PATH="$GNUBIN:$PATH" bash "$HOOK_LINT" post
+expect GNU2-post-mode-real-violation-still-fires 2 err "NG104"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== C1: file_path newline injection (arbitrary file deletion) =="
+###############################################################################
+
+# The embedded python communicated fp/tp back to bash as two stdout lines
+# read with `sed -n '1p'`/`sed -n '2p'`. A file_path containing a newline
+# shifted that protocol: CONTENT_PATH became the newline-split second
+# segment -- an attacker-chosen RELATIVE path -- and the cleanup trap's
+# alias guard only compared against FILE_PATH, so `rm -f "$CODE_PATH"`
+# deleted it. file_path is model-authored, so this is reachable from prompt
+# injection with no rule needing to fire. Reproduces against a decoy file in
+# the cwd: must exit 0 AND leave the decoy untouched.
+C1_DIR="$TMPROOT/c1"; mkdir -p "$C1_DIR"
+cd "$C1_DIR" || exit 1
+printf '%s' "decoy-content" > decoy.ts
+C1_FP=$'/tmp/angular-guide-c1-nonexistent/x.ts\ndecoy.ts'
+run "$(write_json "$C1_FP" 'const x = 1;')" bash "$HOOK_LINT" pre
+C1_OK=0
+[ "$CODE" = "0" ] || C1_OK=1
+[ -f "$C1_DIR/decoy.ts" ] || C1_OK=1
+[ "$(cat "$C1_DIR/decoy.ts" 2>/dev/null)" = "decoy-content" ] || C1_OK=1
+check C1-newline-filepath-no-deletion "newline-bearing file_path: exit 0, decoy file in cwd survives" "$C1_OK"
+
+cd "$ROOT" || exit 1
 
 ###############################################################################
 echo
