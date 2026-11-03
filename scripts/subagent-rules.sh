@@ -1,50 +1,57 @@
 #!/usr/bin/env bash
 # subagent-rules.sh — SubagentStart hook. Subagents inherit no skills, so the
-# condensed rule set is injected directly. Mirrors skills/angular-essentials.
-# Always exits 0; stdout becomes subagent context.
+# condensed blocking rule set is injected directly, rendered from rules.py.
+#
+# Claude Code only injects SubagentStart output that arrives as JSON
+# (hookSpecificOutput.additionalContext); plain stdout goes to the debug log.
+#
+# Only runs inside an Angular workspace (a profile resolves from the
+# payload's cwd), and includes only the rules whose gates the profile turns
+# on and that are not disabled — the same filter lint.py applies. Always
+# exits 0.
 
 set -u
-cat <<'RULES'
-## angular-guide — Rules for Subagents
 
-You are working in a modern Angular workspace (v20+). These are enforced by
-hooks; violating them blocks your write.
+INPUT=$(cat)
 
-### Components and templates
-- NG001 Never write `standalone: true` — standalone is the default since v20.
-- NG002 Never create an `@NgModule`. Use standalone components.
-- NG003 Use `@if` / `@for` / `@switch`, never `*ngIf` / `*ngFor` / `*ngSwitch`.
-- NG005 Use the `input()` / `output()` / `model()` functions, never the `@Input()` / `@Output()` decorators.
-- NG006 Never set `changeDetection: ChangeDetectionStrategy.OnPush` — it is the default in v22.
-- NG008 Use `[class.x]` and `[style.x]` bindings, never `ngClass` / `ngStyle`.
-- NG009 Use the `host` object in the decorator, never `@HostBinding` / `@HostListener`.
-- NG013 Every `@for` needs a `track` expression.
+python3 -I -B - "$INPUT" "$(dirname "$0")" <<'PY' 2>/dev/null
+import json, os, sys
 
-### Dependency injection and services
-- NG004 Use `inject()`, never constructor-parameter injection.
+try:
+    payload = json.loads(sys.argv[1])
+    start = payload.get("cwd") or os.getcwd()
+    sys.path.insert(0, sys.argv[2])
+    import ag_profile, rules
+    _, profile = ag_profile.ensure(start)
+except Exception:
+    sys.exit(0)
+if not profile:
+    sys.exit(0)
 
-### Reactivity
-- NG011 Signals have no `mutate()`. Use `set()` or `update()`.
-- NG012 Never write a signal from inside `effect()`. Derived state is `computed()`;
-  state derived from multiple reactive sources is `linkedSignal()`.
-- NG010 Never call `.subscribe()` without `takeUntilDestroyed()`. Prefer the
-  `async` pipe, `toSignal()`, or `httpResource()`.
+disabled = ag_profile.disabled_rules()
+active = [r for r in rules.RULES if r["hook"] == "pre" and r["id"] not in disabled
+          and rules.gate_open(r["gate"], profile)]
 
-### TypeScript
-- NG007 Never use `any`. Use `unknown` and narrow it.
+out = [
+    "## angular-guide — Rules for Subagents",
+    "",
+    "You are working in an Angular %s workspace. These are enforced by hooks;"
+    % profile.get("angular_version", "unknown"),
+    "violating them blocks your write.",
+]
+for section in rules.SECTIONS:
+    lines = ["- %s %s" % (r["id"], r["rule"]) for r in active if r["section"] == section]
+    if lines:
+        out += ["", "### " + section] + lines
+out += [
+    "",
+    "Keep components presentational: HTTP calls, state orchestration, and validation",
+    "belong in services, not components.",
+]
 
-### Security
-- NG014 Never bind `[innerHTML]`.
-- NG015 Never call `bypassSecurityTrust*`.
-- NG016 Never put secrets in `environment*.ts`.
-
-### Workspace-specific
-- NG017 Never import `zone.js` in a zoneless workspace — it re-introduces the
-  monkey-patching that zoneless exists to remove.
-- NG018 Never use Jasmine APIs in a Vitest workspace. Use `vi.fn()` /
-  `vi.spyOn()` — TestBed itself is unchanged.
-
-Keep components presentational: HTTP calls, state orchestration, and validation
-belong in services, not components.
-RULES
+print(json.dumps({"hookSpecificOutput": {
+    "hookEventName": "SubagentStart",
+    "additionalContext": "\n".join(out),
+}}))
+PY
 exit 0

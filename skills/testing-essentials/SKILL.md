@@ -1,10 +1,9 @@
 ---
 name: testing-essentials
 description: MANDATORY for ALL Angular test files. Invoke before writing any .spec.ts file.
-file_patterns:
+paths:
   - "**/*.spec.ts"
   - "**/*.test.ts"
-auto_suggest: true
 ---
 
 # Testing Essentials

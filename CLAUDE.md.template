@@ -12,52 +12,52 @@ This workspace is enforced by the `angular-guide` Claude Code plugin. The rules 
 are **blocking** (`PreToolUse`, exit 2 on violation, the write is rejected) unless noted
 advisory. Full detail, fix examples, and version gates are in the plugin's `README.md`.
 
+<!-- generated:rules-list -->
 ## Components and templates
 
-- Never write `standalone: true` (NG001) — standalone is the default since v20.
-- Never create an `@NgModule` (NG002) — use standalone components.
-- Use `@if` / `@for (... ; track ...)` / `@switch`, never `*ngIf` / `*ngFor` / `*ngSwitch` (NG003).
-- Use `input()` / `output()` / `model()`, never `@Input()` / `@Output()` decorators (NG005).
-- Never set `changeDetection: ChangeDetectionStrategy.OnPush` explicitly (NG006) — default since v22.
-- Use `[class.x]` / `[style.x]` bindings, never `ngClass` / `ngStyle` (NG008).
-- Use the `host` object in decorator metadata, never `@HostBinding` / `@HostListener` (NG009).
-- Every `@for` needs a `track` expression (NG013).
+- Never write `standalone: true` — standalone is the default since v20. (NG001)
+- Never create an `@NgModule` — use standalone components. (NG002)
+- Use `@if` / `@for (... ; track ...)` / `@switch`, never `*ngIf` / `*ngFor` / `*ngSwitch`. (NG003)
+- Use `input()` / `output()` / `model()`, never the `@Input()` / `@Output()` decorators. (NG005)
+- Never set `changeDetection: ChangeDetectionStrategy.OnPush` — it is the default in v22. (NG006, v22+ only)
+- Use `[class.x]` / `[style.x]` bindings, never `ngClass` / `ngStyle`. (NG008)
+- Use the `host` object in decorator metadata, never `@HostBinding` / `@HostListener`. (NG009)
+- Every `@for` needs a `track` expression. (NG013)
 
 ## Dependency injection
 
-- Use `inject()` at field level, never constructor-parameter injection (NG004).
+- Use `inject()` at field level, never constructor-parameter injection. (NG004)
 
 ## Reactivity
 
-- Signals have no `.mutate()` — use `.set()` or `.update()` (NG011).
-- Never write a signal from inside `effect()` (NG012) — derived state is `computed()`;
-  writable state derived from other signals is `linkedSignal()`.
-- Never call `.subscribe()` without a teardown operator in the chain (NG010) — prefer
-  the `async` pipe, `toSignal()`, or `httpResource()` instead of subscribing at all.
+- Never call `.subscribe()` without teardown in the chain — prefer the `async` pipe, `toSignal()`, or `httpResource()`; for a one-shot HTTP command, `await firstValueFrom(...)`. (NG010)
+- Signals have no `.mutate()` — use `.set()` or `.update()`. (NG011)
+- Never write a signal from inside `effect()` — derived state is `computed()`; writable state derived from other signals is `linkedSignal()`. (NG012)
 
-## TypeScript and security
+## TypeScript
 
-- Never use `any` (NG007) — use `unknown` and narrow it.
-- Never bind `[innerHTML]` / `[outerHTML]` (NG014), never call `bypassSecurityTrust*` (NG015).
-- Never put a secret-shaped value in `environment*.ts` (NG016) — it ships to the browser.
+- Never use `any` — use `unknown` and narrow it. (NG007)
 
-## Workspace-specific (only active if this workspace matches)
+## Security
 
-- Never import `zone.js` in a zoneless workspace (NG017).
-- Never use Jasmine APIs (`jasmine.*`) if this workspace runs Vitest (NG018) — use
-  `vi.fn()` / `vi.spyOn()`.
+- Never bind `[innerHTML]` / `[outerHTML]`. (NG014)
+- Never call `bypassSecurityTrust*`. (NG015)
+- Never put a secret in `environment*.ts` — it ships to the browser. (NG016)
+
+## Workspace-specific
+
+- Never import `zone.js` in a zoneless workspace — it re-introduces the monkey-patching zoneless exists to remove. (NG017, zoneless workspaces only)
+- Never use Jasmine APIs (`jasmine.*`) in a Vitest workspace — use `vi.fn()` / `vi.spyOn()`; TestBed itself is unchanged. (NG018, Vitest workspaces only)
 
 ## Advisory (flagged after the write, not blocked)
 
-- Route `component:` references should be lazy (`loadComponent`) (NG101).
-- `FormBuilder`/`FormGroup` on a v22+ workspace with Signal Forms available should be
-  Signal Forms for new forms (NG102).
-- `@Injectable({ providedIn: 'root' })` on v22+ should be `@Service()` (NG103).
-- A static `<img src>` should use `NgOptimizedImage`/`ngSrc` (NG104).
-- No direct `document`/`window` access in a component — inject `DOCUMENT`, use
-  `viewChild()`/`afterRenderEffect()` (NG105).
-- Keep components small and HTTP-free — past ~200 lines or ~8 inputs, split; HTTP calls
-  belong in a service (NG106).
+- Route `component:` references should be lazy (`loadComponent`). (NG101)
+- New forms should use Signal Forms, not `FormBuilder`/`FormGroup`. (NG102, v22+ only)
+- `@Injectable({ providedIn: 'root' })` should be `@Service()`. (NG103, v22+ only)
+- A static `<img src>` should use `NgOptimizedImage` / `ngSrc`. (NG104)
+- No direct `document`/`window` in a component — inject `DOCUMENT`, use `viewChild()` / `afterRenderEffect()`. (NG105)
+- Keep components small and HTTP-free — past ~200 lines or ~8 inputs, split; HTTP belongs in a service. (NG106)
+<!-- /generated:rules-list -->
 
 ## Architecture (not hook-enforced, but expected)
 
@@ -78,14 +78,3 @@ For anything outside this plugin's scope — API reference, migration guidance, 
 Angular authorship — use Angular's own tooling: the `angular/angular` agent skill
 (`skills/dev-skills/angular-developer/`), the CLI MCP server (`npx @angular/cli mcp`),
 and `angular.dev/llms.txt`.
-
-## Required: gitignore the version-detection cache
-
-`angular-guide` writes `.angular-guide-project.json` at your workspace root on session
-start. **It is a machine-local cache, not a config file** — it's regenerated every
-session from `package.json`/lockfile contents and must never be committed. Add this to
-your `.gitignore` if it isn't there already:
-
-```
-.angular-guide-project.json
-```

@@ -1,9 +1,8 @@
 ---
 name: rxjs-interop
 description: MANDATORY for ALL RxJS work in an Angular workspace. Invoke before writing subscribe, toSignal, toObservable, or any Observable pipeline.
-file_patterns:
+paths:
   - "**/*.ts"
-auto_suggest: true
 ---
 
 # RxJS Interop

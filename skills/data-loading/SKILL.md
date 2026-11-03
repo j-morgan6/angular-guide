@@ -1,10 +1,9 @@
 ---
 name: data-loading
-description: MANDATORY for ALL HTTP and async data work. Invoke before writing HttpClient calls, interceptors, resource, or httpResource.
-file_patterns:
+description: MANDATORY for ALL HTTP and async data work in an Angular workspace. Invoke before writing HttpClient calls, interceptors, resource, or httpResource.
+paths:
   - "**/*.service.ts"
   - "**/*.ts"
-auto_suggest: true
 ---
 
 # Data Loading
@@ -87,6 +86,18 @@ export class OrderService {
 
 Before v22, the same service is `@Injectable({ providedIn: 'root' })` — only the
 decorator changes; the command itself is identical either way.
+
+At the call site a command is one-shot, so `await` it rather than subscribing. A bare
+`.subscribe()` is blocked by NG010 — the hook can't tell an HTTP Observable that
+completes from one that never does — and `firstValueFrom()` is one of the teardowns it
+accepts:
+
+```typescript
+async submit(order: NewOrder) {
+  const placed = await firstValueFrom(this.orders.placeOrder(order));
+  this.router.navigate(['/orders', placed.id]);
+}
+```
 
 ## 3. Never fetch in a component (NG106)
 
@@ -196,8 +207,8 @@ indirection. Both are v22+.
 
 ```typescript
 readonly settingsResource = resource({ // v22+
-  request: () => this.userId(),
-  loader: ({ request }) => this.db.getSettings(request),
+  params: () => this.userId(),
+  loader: ({ params }) => this.db.getSettings(params),
 });
 ```
 

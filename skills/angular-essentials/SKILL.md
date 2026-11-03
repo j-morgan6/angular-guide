@@ -1,10 +1,9 @@
 ---
 name: angular-essentials
 description: MANDATORY for ALL Angular code changes. Invoke before writing any .ts or .html file in an Angular workspace.
-file_patterns:
+paths:
   - "**/*.ts"
   - "**/*.html"
-auto_suggest: true
 ---
 
 # Angular Essentials

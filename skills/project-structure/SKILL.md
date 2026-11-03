@@ -1,10 +1,9 @@
 ---
 name: project-structure
 description: MANDATORY for file naming and project layout. Invoke before creating files or directories in an Angular workspace.
-file_patterns:
+paths:
   - "**/*.ts"
   - "**/angular.json"
-auto_suggest: true
 ---
 
 # Project Structure

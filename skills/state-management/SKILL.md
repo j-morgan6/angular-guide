@@ -1,11 +1,10 @@
 ---
 name: state-management
-description: MANDATORY before introducing shared state or a state library. Invoke before adding a store, a state service, or NgRx.
-file_patterns:
+description: MANDATORY before introducing shared state or a state library in an Angular workspace. Invoke before adding a store, a state service, or NgRx.
+paths:
   - "**/*.store.ts"
   - "**/*.service.ts"
   - "**/*.ts"
-auto_suggest: true
 ---
 
 # State Management

@@ -61,13 +61,13 @@ expect() { # <name> <expected-exit> <stream:err|out|none> <substring-or-empty>
 
 # JSON helpers — build the tool-input payloads Claude Code sends to hooks
 write_json() { # file_path content
-  python3 -c 'import json,sys; print(json.dumps({"tool_name":"Write","tool_input":{"file_path":sys.argv[1],"content":sys.argv[2]}}))' "$1" "$2"
+  python3 -I -c 'import json,sys; print(json.dumps({"tool_name":"Write","tool_input":{"file_path":sys.argv[1],"content":sys.argv[2]}}))' "$1" "$2"
 }
 edit_json() { # file_path old new
-  python3 -c 'import json,sys; print(json.dumps({"tool_name":"Edit","tool_input":{"file_path":sys.argv[1],"old_string":sys.argv[2],"new_string":sys.argv[3]}}))' "$1" "$2" "$3"
+  python3 -I -c 'import json,sys; print(json.dumps({"tool_name":"Edit","tool_input":{"file_path":sys.argv[1],"old_string":sys.argv[2],"new_string":sys.argv[3]}}))' "$1" "$2" "$3"
 }
 bash_json() { # command
-  python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$1"
+  python3 -I -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$1"
 }
 
 # ng_workspace <dir> <angular-version> [extra-devdeps-json]
@@ -88,6 +88,11 @@ json.dump({"name":"fixture","dependencies":{"@angular/core":"^"+sys.argv[2]},"de
 
 TMPROOT=$(mktemp -d)
 trap 'rm -rf "$TMPROOT"' EXIT
+
+# Profiles live in the plugin's data dir (CLAUDE_PLUGIN_DATA), never in the
+# workspace. profile_of <workspace-root> prints where a root's profile goes.
+export CLAUDE_PLUGIN_DATA="$TMPROOT/plugin-data"
+profile_of() { python3 -I "$ROOT/scripts/ag_profile.py" path "$1"; }
 
 ###############################################################################
 echo "== manifests =="
@@ -128,29 +133,29 @@ echo "== detect_project.sh =="
 WORK="$TMPROOT/d1"; ng_workspace "$WORK" "22.0.1"; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D1_OK=0
-grep -q '"angular_major": 22' .angular-guide-project.json 2>/dev/null || D1_OK=1
-grep -q '"onpush_default": true' .angular-guide-project.json 2>/dev/null || D1_OK=1
-grep -q '"signal_forms_available": true' .angular-guide-project.json 2>/dev/null || D1_OK=1
-grep -q '"service_decorator_available": true' .angular-guide-project.json 2>/dev/null || D1_OK=1
-grep -q '"standalone_default": true' .angular-guide-project.json 2>/dev/null || D1_OK=1
+grep -q '"angular_major": 22' "$(profile_of "$WORK")" 2>/dev/null || D1_OK=1
+grep -q '"onpush_default": true' "$(profile_of "$WORK")" 2>/dev/null || D1_OK=1
+grep -q '"signal_forms_available": true' "$(profile_of "$WORK")" 2>/dev/null || D1_OK=1
+grep -q '"service_decorator_available": true' "$(profile_of "$WORK")" 2>/dev/null || D1_OK=1
+grep -q '"standalone_default": true' "$(profile_of "$WORK")" 2>/dev/null || D1_OK=1
 check D1-v22-gates "v22 workspace sets all v22 gates true" "$D1_OK"
 
 # D2: v21 workspace — onpush/signal-forms/@Service OFF, standalone ON
 WORK="$TMPROOT/d2"; ng_workspace "$WORK" "21.2.0"; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D2_OK=0
-grep -q '"angular_major": 21' .angular-guide-project.json 2>/dev/null || D2_OK=1
-grep -q '"onpush_default": false' .angular-guide-project.json 2>/dev/null || D2_OK=1
-grep -q '"signal_forms_available": false' .angular-guide-project.json 2>/dev/null || D2_OK=1
-grep -q '"standalone_default": true' .angular-guide-project.json 2>/dev/null || D2_OK=1
+grep -q '"angular_major": 21' "$(profile_of "$WORK")" 2>/dev/null || D2_OK=1
+grep -q '"onpush_default": false' "$(profile_of "$WORK")" 2>/dev/null || D2_OK=1
+grep -q '"signal_forms_available": false' "$(profile_of "$WORK")" 2>/dev/null || D2_OK=1
+grep -q '"standalone_default": true' "$(profile_of "$WORK")" 2>/dev/null || D2_OK=1
 check D2-v21-gates "v21 leaves v22-only gates false, standalone true" "$D2_OK"
 
 # D3: v20 workspace
 WORK="$TMPROOT/d3"; ng_workspace "$WORK" "20.0.0"; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D3_OK=0
-grep -q '"angular_major": 20' .angular-guide-project.json 2>/dev/null || D3_OK=1
-grep -q '"standalone_default": true' .angular-guide-project.json 2>/dev/null || D3_OK=1
+grep -q '"angular_major": 20' "$(profile_of "$WORK")" 2>/dev/null || D3_OK=1
+grep -q '"standalone_default": true' "$(profile_of "$WORK")" 2>/dev/null || D3_OK=1
 check D3-v20-gates "v20 sets standalone_default true" "$D3_OK"
 
 # D4: not an Angular workspace — exit 0, no cache, no output
@@ -158,33 +163,34 @@ WORK="$TMPROOT/d4"; mkdir -p "$WORK"; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D4_OK=0
 [ "$CODE" = "0" ] || D4_OK=1
-[ ! -f .angular-guide-project.json ] || D4_OK=1
+[ ! -f "$(profile_of "$WORK")" ] || D4_OK=1
+[ ! -f "$WORK/.angular-guide-project.json" ] || D4_OK=1
 check D4-non-angular-inert "no angular.json → exit 0, no cache written" "$D4_OK"
 
 # D5: zone.js present → zoneless false; absent → zoneless true
 WORK="$TMPROOT/d5"; ng_workspace "$WORK" "22.0.0" '{"zone.js":"~0.15.0"}'; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D5_OK=0
-grep -q '"zoneless": false' .angular-guide-project.json 2>/dev/null || D5_OK=1
+grep -q '"zoneless": false' "$(profile_of "$WORK")" 2>/dev/null || D5_OK=1
 check D5-zonejs-present "zone.js dependency → zoneless false" "$D5_OK"
 
 WORK="$TMPROOT/d5b"; ng_workspace "$WORK" "22.0.0"; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D5B_OK=0
-grep -q '"zoneless": true' .angular-guide-project.json 2>/dev/null || D5B_OK=1
+grep -q '"zoneless": true' "$(profile_of "$WORK")" 2>/dev/null || D5B_OK=1
 check D5b-zonejs-absent "no zone.js → zoneless true" "$D5B_OK"
 
 # D6: test runner detection
 WORK="$TMPROOT/d6"; ng_workspace "$WORK" "22.0.0" '{"vitest":"^3.0.0"}'; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D6_OK=0
-grep -q '"test_runner": "vitest"' .angular-guide-project.json 2>/dev/null || D6_OK=1
+grep -q '"test_runner": "vitest"' "$(profile_of "$WORK")" 2>/dev/null || D6_OK=1
 check D6-vitest "vitest devDependency detected" "$D6_OK"
 
 WORK="$TMPROOT/d6b"; ng_workspace "$WORK" "21.0.0" '{"karma":"~6.4.0"}'; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D6B_OK=0
-grep -q '"test_runner": "karma"' .angular-guide-project.json 2>/dev/null || D6B_OK=1
+grep -q '"test_runner": "karma"' "$(profile_of "$WORK")" 2>/dev/null || D6B_OK=1
 check D6b-karma "karma devDependency detected" "$D6B_OK"
 
 # D7: unknown version → gates must be false, never guessed
@@ -193,9 +199,9 @@ printf '{"version":1,"projects":{}}\n' > angular.json
 printf '{"name":"x","dependencies":{}}\n' > package.json
 run "" bash "$DETECT"
 D7_OK=0
-grep -q '"angular_major": "unknown"' .angular-guide-project.json 2>/dev/null || D7_OK=1
-grep -q '"onpush_default": false' .angular-guide-project.json 2>/dev/null || D7_OK=1
-grep -q '"standalone_default": false' .angular-guide-project.json 2>/dev/null || D7_OK=1
+grep -q '"angular_major": "unknown"' "$(profile_of "$WORK")" 2>/dev/null || D7_OK=1
+grep -q '"onpush_default": false' "$(profile_of "$WORK")" 2>/dev/null || D7_OK=1
+grep -q '"standalone_default": false' "$(profile_of "$WORK")" 2>/dev/null || D7_OK=1
 check D7-unknown-version "unknown version → every gate false, never guessed" "$D7_OK"
 
 # D8: package manager from lockfile
@@ -203,7 +209,7 @@ WORK="$TMPROOT/d8"; ng_workspace "$WORK" "22.0.0"; cd "$WORK" || exit 1
 touch pnpm-lock.yaml
 run "" bash "$DETECT"
 D8_OK=0
-grep -q '"package_manager": "pnpm"' .angular-guide-project.json 2>/dev/null || D8_OK=1
+grep -q '"package_manager": "pnpm"' "$(profile_of "$WORK")" 2>/dev/null || D8_OK=1
 check D8-pnpm-lockfile "pnpm-lock.yaml → package_manager pnpm" "$D8_OK"
 
 # D9: detection runs from a nested subdirectory and finds the workspace root
@@ -211,8 +217,8 @@ WORK="$TMPROOT/d9"; ng_workspace "$WORK" "22.0.0"
 mkdir -p "$WORK/src/app/feature"; cd "$WORK/src/app/feature" || exit 1
 run "" bash "$DETECT"
 D9_OK=0
-[ -f "$WORK/.angular-guide-project.json" ] || D9_OK=1
-check D9-walks-up "runs from nested dir, writes cache at workspace root" "$D9_OK"
+[ -f "$(profile_of "$WORK")" ] || D9_OK=1
+check D9-walks-up "runs from nested dir, caches the profile for the workspace root" "$D9_OK"
 
 # D10: announces to stdout for session context
 D10_OK=0
@@ -237,8 +243,8 @@ json.dump(
 '
 run "" bash "$DETECT"
 D11_OK=0
-grep -q '"angular_major": 22' .angular-guide-project.json 2>/dev/null || D11_OK=1
-grep -q '"onpush_default": true' .angular-guide-project.json 2>/dev/null || D11_OK=1
+grep -q '"angular_major": 22' "$(profile_of "$WORK")" 2>/dev/null || D11_OK=1
+grep -q '"onpush_default": true' "$(profile_of "$WORK")" 2>/dev/null || D11_OK=1
 check D11-package-lock-fallback "unresolvable package.json range, package-lock.json resolves version" "$D11_OK"
 
 # D12: package.json range unresolvable, yarn.lock resolves the version
@@ -257,8 +263,8 @@ printf '%s\n' \
   > yarn.lock
 run "" bash "$DETECT"
 D12_OK=0
-grep -q '"angular_major": 22' .angular-guide-project.json 2>/dev/null || D12_OK=1
-grep -q '"onpush_default": true' .angular-guide-project.json 2>/dev/null || D12_OK=1
+grep -q '"angular_major": 22' "$(profile_of "$WORK")" 2>/dev/null || D12_OK=1
+grep -q '"onpush_default": true' "$(profile_of "$WORK")" 2>/dev/null || D12_OK=1
 check D12-yarn-lock-fallback "unresolvable package.json range, yarn.lock resolves version" "$D12_OK"
 
 # D13: package.json range unresolvable, pnpm-lock.yaml resolves the version
@@ -273,8 +279,8 @@ json.dump(d, open("package.json", "w"))
 printf "packages:\n  '@angular/core@22.0.1':\n" > pnpm-lock.yaml
 run "" bash "$DETECT"
 D13_OK=0
-grep -q '"angular_major": 22' .angular-guide-project.json 2>/dev/null || D13_OK=1
-grep -q '"onpush_default": true' .angular-guide-project.json 2>/dev/null || D13_OK=1
+grep -q '"angular_major": 22' "$(profile_of "$WORK")" 2>/dev/null || D13_OK=1
+grep -q '"onpush_default": true' "$(profile_of "$WORK")" 2>/dev/null || D13_OK=1
 check D13-pnpm-lock-fallback "unresolvable package.json range, pnpm-lock.yaml resolves version" "$D13_OK"
 
 ###############################################################################
@@ -443,13 +449,14 @@ echo "== bash-guard.sh (BG001/BG003/BG004/BG005 hardening) =="
 # Real git repos with controlled branches, for the BG001 current-branch
 # inference arm (an unqualified force push names no branch, so it pushes
 # whichever branch is checked out).
-GITMAIN="$TMPROOT/bg-git-main"; mkdir -p "$GITMAIN"
+# The guard only runs inside an Angular workspace, so each fixture is one.
+GITMAIN="$TMPROOT/bg-git-main"; ng_workspace "$GITMAIN" "22.0.0"
 ( cd "$GITMAIN" && git init -q -b main . ) >/dev/null 2>&1
 
-GITFEAT="$TMPROOT/bg-git-feature"; mkdir -p "$GITFEAT"
+GITFEAT="$TMPROOT/bg-git-feature"; ng_workspace "$GITFEAT" "22.0.0"
 ( cd "$GITFEAT" && git init -q -b main . && git checkout -q -b feature/x ) >/dev/null 2>&1
 
-GITNONE="$TMPROOT/bg-no-git"; mkdir -p "$GITNONE"
+GITNONE="$TMPROOT/bg-no-git"; ng_workspace "$GITNONE" "22.0.0"
 
 cd "$GITMAIN" || exit 1
 run "$(bash_json "$PUSH $FORCE")" bash "$BASH_GUARD"
@@ -504,7 +511,7 @@ expect B25-colon-refspec-src-main-dst-feature-ok 0 none ""
 # Finding 3 (round 3 review): detached HEAD, as a real fixture rather than an
 # argument — no checked-out branch to infer, so an unqualified force push
 # must fail open.
-GITDETACHED="$TMPROOT/bg-git-detached"; mkdir -p "$GITDETACHED"
+GITDETACHED="$TMPROOT/bg-git-detached"; ng_workspace "$GITDETACHED" "22.0.0"
 ( cd "$GITDETACHED" && git init -q -b main . \
     && git -c user.email=a@a -c user.name=a commit -q --allow-empty -m init \
     && git checkout -q --detach ) >/dev/null 2>&1
@@ -541,12 +548,12 @@ assert matchers == ["Bash", "Write|Edit"], matchers
 PY
 check W2-hooks-wiring "5 commands, CLAUDE_PLUGIN_ROOT paths, scripts exist and are executable" "$W2_OK"
 
+# Content and gating are covered by SA1-SA6; here only the fail-open contract:
+# garbage stdin still exits 0.
 W3_OK=0
-run "" bash "$SUBAGENT"
+run "not json" bash "$SUBAGENT"
 [ "$CODE" = "0" ] || W3_OK=1
-printf '%s' "$OUT" | grep -q "NG001" || W3_OK=1
-printf '%s' "$OUT" | grep -qF "inject()" || W3_OK=1
-check W3-subagent-rules "subagent-rules emits rules on stdout, exit 0" "$W3_OK"
+check W3-subagent-rules-fail-open "subagent-rules exits 0 on malformed input" "$W3_OK"
 
 # W4: per-event/matcher wiring — script AND trailing mode token, checked
 # together, so a hook-lint.sh pre/post swap between PreToolUse and
@@ -959,24 +966,31 @@ S1_OK=0
 python3 - "$ROOT" <<'PY' 2>/dev/null || S1_OK=1
 import os, re, sys, glob
 root = sys.argv[1]
-REQUIRED = ["name", "description", "file_patterns", "auto_suggest"]
+# `paths` is Claude Code's glob-scoping field for skills. `file_patterns`
+# and `auto_suggest` are not recognised and are silently ignored, so they
+# must not come back.
+REQUIRED = ["name", "description", "paths"]
 skills = sorted(glob.glob(os.path.join(root, "skills", "*", "SKILL.md")))
 assert skills, "no skills found"
 for p in skills:
     txt = open(p, encoding="utf-8").read()
     assert txt.startswith("---\n"), p + ": missing frontmatter"
     fm = txt.split("---", 2)[1]
-    for key in ("name:", "description:", "file_patterns:", "auto_suggest:"):
+    for key in ("name:", "description:", "paths:"):
         assert key in fm, "%s: frontmatter missing %s" % (p, key)
+    for key in ("file_patterns", "auto_suggest"):
+        assert not re.search(r"^%s:" % key, fm, re.M), "%s: unsupported key %s" % (p, key)
+    assert "Angular" in re.search(r"^description:(.*)$", fm, re.M).group(1), \
+        "%s: description must scope the skill to Angular" % p
     name = re.search(r"^name:\s*(\S+)", fm, re.M).group(1)
     assert name == os.path.basename(os.path.dirname(p)), \
         "%s: frontmatter name %r != directory name" % (p, name)
     # Order check: collect top-level frontmatter keys (matched at the start
     # of a line, so a key-like substring inside a value, e.g. "name:" typed
     # inside a description sentence, can never be mistaken for a real key),
-    # keep only the four required ones, and require they appear in the
+    # keep only the required ones, and require they appear in the
     # mandated relative order. Any other key a skill adds is untouched by
-    # this check -- the constraint is about the required four, not an
+    # this check -- the constraint is about the required keys, not an
     # exhaustive/forbidding schema.
     top_level_keys = re.findall(r"^([A-Za-z_][A-Za-z0-9_]*):", fm, re.M)
     required_in_order = [k for k in top_level_keys if k in REQUIRED]
@@ -986,37 +1000,41 @@ for p in skills:
 PY
 check S1-skill-shape "every SKILL.md has valid frontmatter, ordered keys, and a RULES section" "$S1_OK"
 
+# One registry (scripts/rules.py) is the source for every rule's ID, gate and
+# text. Skills may only cite IDs it defines.
 S2_OK=0
-python3 - "$ROOT" <<'PY' 2>/dev/null || S2_OK=1
+python3 -I - "$ROOT" <<'PY' 2>/dev/null || S2_OK=1
 import os, re, sys, glob
 root = sys.argv[1]
-lint = open(os.path.join(root, "scripts", "hook-lint.sh"), encoding="utf-8").read()
-defined = set(re.findall(r"check_(ng\d{3})\s*\(\)", lint))
-defined = {d.upper() for d in defined}
-guard = open(os.path.join(root, "scripts", "bash-guard.sh"), encoding="utf-8").read()
-defined |= set(re.findall(r"\b(BG\d{3})\b", guard))
+sys.path.insert(0, os.path.join(root, "scripts"))
+import rules
+defined = {r["id"] for r in rules.RULES}
 referenced = set()
 for p in glob.glob(os.path.join(root, "skills", "*", "SKILL.md")):
     referenced |= set(re.findall(r"\b((?:NG|BG)\d{3})\b", open(p, encoding="utf-8").read()))
-sub = open(os.path.join(root, "scripts", "subagent-rules.sh"), encoding="utf-8").read()
-referenced |= set(re.findall(r"\b((?:NG|BG)\d{3})\b", sub))
 orphans = sorted(referenced - defined)
-assert not orphans, "rule IDs referenced but not implemented: " + ", ".join(orphans)
+assert not orphans, "rule IDs cited by skills but not in rules.py: " + ", ".join(orphans)
 PY
-check S2-no-orphan-rule-ids "every rule ID cited in a skill or subagent-rules exists in a script" "$S2_OK"
+check S2-no-orphan-rule-ids "every rule ID cited in a skill exists in rules.py" "$S2_OK"
 
+# Every registry entry has an implementation and vice versa.
 S3_OK=0
-python3 - "$ROOT" <<'PY' 2>/dev/null || S3_OK=1
+python3 -I - "$ROOT" <<'PY' 2>/dev/null || S3_OK=1
 import os, re, sys
 root = sys.argv[1]
-lint = open(os.path.join(root, "scripts", "hook-lint.sh"), encoding="utf-8").read()
-pre = {d.upper() for d in re.findall(r"check_(ng0\d{2})\s*\(\)", lint)}
-sub = open(os.path.join(root, "scripts", "subagent-rules.sh"), encoding="utf-8").read()
-cited = set(re.findall(r"\b(NG0\d{2})\b", sub))
-missing = sorted(pre - cited)
-assert not missing, "blocking rules absent from the subagent rule set: " + ", ".join(missing)
+sys.path.insert(0, os.path.join(root, "scripts"))
+import rules
+lint = open(os.path.join(root, "scripts", "lint.py"), encoding="utf-8").read()
+guard = open(os.path.join(root, "scripts", "guard.py"), encoding="utf-8").read()
+checks = set(re.findall(r'@check\("(NG\d{3})"\)', lint))
+guarded = set(re.findall(r'"(BG\d{3})"', guard))
+want_ng = {r["id"] for r in rules.RULES if r["hook"] in ("pre", "post")}
+want_bg = {r["id"] for r in rules.RULES if r["hook"] == "bash"}
+assert checks == want_ng, ("lint.py vs rules.py", sorted(checks ^ want_ng))
+assert guarded == want_bg, ("guard.py vs rules.py", sorted(guarded ^ want_bg))
+assert len(rules.RULES) == 30, len(rules.RULES)
 PY
-check S3-subagent-covers-blocking "every blocking NG0xx rule appears in subagent-rules.sh" "$S3_OK"
+check S3-registry-matches-implementations "rules.py entries == lint.py checks + guard.py rules (30)" "$S3_OK"
 
 ###############################################################################
 echo
@@ -1029,20 +1047,12 @@ for f in README.md CLAUDE.md.template CHANGELOG.md; do
 done
 check R1-docs-exist "README, CLAUDE.md.template, CHANGELOG are present and non-empty" "$R1_OK"
 
+# README rule tables and CLAUDE.md.template rule lists are generated from
+# rules.py; --check fails if either is stale.
 R2_OK=0
-python3 - "$ROOT" <<'PY' 2>/dev/null || R2_OK=1
-import os, re, sys
-root = sys.argv[1]
-lint = open(os.path.join(root, "scripts", "hook-lint.sh"), encoding="utf-8").read()
-guard = open(os.path.join(root, "scripts", "bash-guard.sh"), encoding="utf-8").read()
-implemented = {d.upper() for d in re.findall(r"check_(ng\d{3})\s*\(\)", lint)}
-implemented |= set(re.findall(r"\b(BG\d{3})\b", guard))
-readme = open(os.path.join(root, "README.md"), encoding="utf-8").read()
-documented = set(re.findall(r"\b((?:NG|BG)\d{3})\b", readme))
-missing = sorted(implemented - documented)
-assert not missing, "rules implemented but undocumented in README: " + ", ".join(missing)
-PY
-check R2-readme-documents-every-rule "every implemented rule ID appears in the README" "$R2_OK"
+run "" python3 -I "$ROOT/tools/gen_docs.py" --check
+[ "$CODE" = "0" ] || R2_OK=1
+check R2-generated-docs-current "tools/gen_docs.py --check: README and CLAUDE.md.template match rules.py" "$R2_OK"
 
 R3_OK=0
 python3 - "$ROOT" <<'PY' 2>/dev/null || R3_OK=1
@@ -1061,9 +1071,9 @@ for p in agents:
 PY
 check R3-agents-readonly "3 agents, valid frontmatter, no write tools" "$R3_OK"
 
-R4_OK=0
-grep -q '.angular-guide-project.json' "$ROOT/CLAUDE.md.template" 2>/dev/null || R4_OK=1
-check R4-template-gitignore "CLAUDE.md.template tells users to gitignore the profile cache" "$R4_OK"
+R5_OK=0
+grep -q 'gitignore' "$ROOT/CLAUDE.md.template" 2>/dev/null && R5_OK=1
+check R5-template-no-gitignore-step "CLAUDE.md.template no longer asks users to gitignore a cache" "$R5_OK"
 
 ###############################################################################
 echo
@@ -1157,12 +1167,10 @@ expect I4-untracked-update-silent 0 none ""
 run "$(write_json "$V22/src/app/a.ts" 'effect(() => { untracked(() => console.log(this.a())); this.total.set(this.a()); });')" bash "$HOOK_LINT" pre
 expect I4-write-outside-untracked-still-fires 2 err "NG012"
 
-# Known, documented limitation (not fixed): a plain Map/WeakMap .set() call
-# inside an effect is indistinguishable from a signal .set() call without
-# type information, so it is still flagged. Pinned here as a known false
-# positive rather than silently left untested.
+# A Map/WeakMap .set(k, v) takes two arguments; a signal .set() takes one,
+# so the argument count tells them apart without type information.
 run "$(write_json "$V22/src/app/a.ts" 'effect(() => { this.cache.set(k, v); });')" bash "$HOOK_LINT" pre
-expect I4-plain-map-set-known-false-positive 2 err "NG012"
+expect I4-plain-map-set-not-flagged 0 none ""
 
 ###############################################################################
 echo
@@ -1180,9 +1188,9 @@ cd "$I5A" || exit 1
 run "" bash "$DETECT"
 I5A_OK=0
 [ "$CODE" = "0" ] || I5A_OK=1
-[ -f "$I5A/apps/web/.angular-guide-project.json" ] || I5A_OK=1
-[ -f "$I5A/.angular-guide-project.json" ] && I5A_OK=1
-grep -q '"angular_major": 22' "$I5A/apps/web/.angular-guide-project.json" 2>/dev/null || I5A_OK=1
+[ -f "$(profile_of "$I5A/apps/web")" ] || I5A_OK=1
+[ -f "$(profile_of "$I5A")" ] && I5A_OK=1
+grep -q '"angular_major": 22' "$(profile_of "$I5A/apps/web")" 2>/dev/null || I5A_OK=1
 check I5-monorepo-downward-search "session at repo root finds the single nested angular.json downward" "$I5A_OK"
 
 # node_modules must be pruned from the downward search -- an angular.json
@@ -1201,8 +1209,8 @@ cd "$I5B" || exit 1
 run "" bash "$DETECT"
 I5B_OK=0
 [ "$CODE" = "0" ] || I5B_OK=1
-[ ! -f "$I5B/.angular-guide-project.json" ] || I5B_OK=1
-[ ! -f "$I5B/node_modules/some-pkg/.angular-guide-project.json" ] || I5B_OK=1
+[ ! -f "$(profile_of "$I5B")" ] || I5B_OK=1
+[ ! -f "$(profile_of "$I5B/node_modules/some-pkg")" ] || I5B_OK=1
 check I5b-monorepo-skips-node-modules "angular.json+package.json under node_modules is never treated as a workspace root" "$I5B_OK"
 
 # Two angular.json files at the same shallowest depth: genuinely ambiguous.
@@ -1215,9 +1223,9 @@ cd "$I5C" || exit 1
 run "" bash "$DETECT"
 I5C_OK=0
 [ "$CODE" = "0" ] || I5C_OK=1
-[ ! -f "$I5C/apps/web/.angular-guide-project.json" ] || I5C_OK=1
-[ ! -f "$I5C/apps/admin/.angular-guide-project.json" ] || I5C_OK=1
-[ ! -f "$I5C/.angular-guide-project.json" ] || I5C_OK=1
+[ ! -f "$(profile_of "$I5C/apps/web")" ] || I5C_OK=1
+[ ! -f "$(profile_of "$I5C/apps/admin")" ] || I5C_OK=1
+[ ! -f "$(profile_of "$I5C")" ] || I5C_OK=1
 check I5c-monorepo-ambiguous-writes-no-profile "two angular.json at the same depth -> no profile written, exit 0" "$I5C_OK"
 
 cd "$ROOT" || exit 1
@@ -1384,6 +1392,557 @@ C1_OK=0
 [ -f "$C1_DIR/decoy.ts" ] || C1_OK=1
 [ "$(cat "$C1_DIR/decoy.ts" 2>/dev/null)" = "decoy-content" ] || C1_OK=1
 check C1-newline-filepath-no-deletion "newline-bearing file_path: exit 0, decoy file in cwd survives" "$C1_OK"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== PY-I: hooks never import modules from the user's project directory =="
+###############################################################################
+
+# `python3 -` and `python3 -c` put the cwd on sys.path, so a repository with
+# a json.py or re.py would have it executed by every hook -- SessionStart
+# included -- just by opening a session there. Every interpreter must run
+# isolated (-I). Each planted module writes a marker if it is ever imported.
+PYI="$TMPROOT/pyi"; ng_workspace "$PYI" "22.0.0"; mkdir -p "$PYI/src/app"
+for mod in json re os sys math tempfile collections shlex hashlib datetime; do
+  printf 'open(%s, "a").write("%s\\n")\n' "'$PYI/PWNED'" "$mod" > "$PYI/$mod.py"
+done
+cd "$PYI" || exit 1
+bash "$DETECT" >/dev/null 2>&1
+run "$(write_json "$PYI/src/app/a.ts" 'const x: any = 1;')" bash "$HOOK_LINT" pre
+printf 'x' > "$PYI/src/app/b.component.ts"
+run "$(write_json "$PYI/src/app/b.component.ts" 'x')" bash "$HOOK_LINT" post
+run "$(bash_json 'ng build --prod')" bash "$BASH_GUARD"
+run '{"hook_event_name":"SubagentStart"}' bash "$SUBAGENT"
+PYI_OK=0
+[ ! -f "$PYI/PWNED" ] || PYI_OK=1
+check PY-I-isolated-interpreters "no planted module in the project dir is imported by any hook ($(tr '\n' ' ' < "$PYI/PWNED" 2>/dev/null))" "$PYI_OK"
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== 1.1.0: SubagentStart emits JSON additionalContext, gated on the profile =="
+###############################################################################
+
+# Claude Code only injects SubagentStart output that arrives as JSON
+# hookSpecificOutput.additionalContext -- plain stdout goes to the debug log.
+# sa_context <dir> -- run subagent-rules.sh from <dir>, print additionalContext
+# (empty when stdout is empty or not the expected JSON shape).
+sa_context() {
+  cd "$1" || exit 1
+  run '{"hook_event_name":"SubagentStart"}' bash "$SUBAGENT"
+  printf '%s' "$OUT" | python3 -c '
+import json, sys
+raw = sys.stdin.read()
+if not raw.strip():
+    sys.exit(0)
+d = json.loads(raw)
+h = d["hookSpecificOutput"]
+assert h["hookEventName"] == "SubagentStart"
+print(h["additionalContext"])
+' 2>/dev/null
+}
+
+SA1=$(sa_context "$V22")
+SA1_OK=0
+[ "$CODE" = "0" ] || SA1_OK=1
+for want in NG001 NG004 NG006 NG013 NG017 "inject()" "Angular 22"; do
+  printf '%s' "$SA1" | grep -qF "$want" || SA1_OK=1
+done
+printf '%s' "$SA1" | grep -qF "NG018" && SA1_OK=1
+check SA1-v22-json-context "v22 zoneless, no vitest: JSON context with v20/v22/zoneless rules, no NG018" "$SA1_OK"
+
+SA2=$(sa_context "$V21")
+SA2_OK=0
+printf '%s' "$SA2" | grep -qF "NG001" || SA2_OK=1
+printf '%s' "$SA2" | grep -qF "NG006" && SA2_OK=1
+check SA2-v21-no-onpush-rule "v21: v20 rules present, NG006 (OnPush default) absent" "$SA2_OK"
+
+SA3=$(sa_context "$UNK")
+SA3_OK=0
+printf '%s' "$SA3" | grep -qF "NG007" || SA3_OK=1
+printf '%s' "$SA3" | grep -qF "NG001" && SA3_OK=1
+check SA3-unknown-version-ungated-only "unknown version: ungated rules only, no NG001" "$SA3_OK"
+
+SA_NONNG="$TMPROOT/not-angular"; mkdir -p "$SA_NONNG"
+sa_context "$SA_NONNG" >/dev/null
+SA4_OK=0
+[ "$CODE" = "0" ] && [ -z "$OUT" ] || SA4_OK=1
+check SA4-non-angular-silent "no profile anywhere: exit 0, no output" "$SA4_OK"
+
+# The hook payload's cwd wins over the process cwd.
+cd "$SA_NONNG" || exit 1
+run "$(python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"SubagentStart","cwd":sys.argv[1]}))' "$V22")" bash "$SUBAGENT"
+SA5_OK=0
+printf '%s' "$OUT" | grep -qF "NG001" || SA5_OK=1
+check SA5-payload-cwd "profile is found from the payload cwd, not just the process cwd" "$SA5_OK"
+
+VT="$TMPROOT/ng22-vitest"; ng_workspace "$VT" "22.0.0" '{"vitest":"^3.0.0"}'
+cd "$VT" || exit 1; bash "$DETECT" >/dev/null 2>&1
+SA6=$(sa_context "$VT")
+SA6_OK=0
+printf '%s' "$SA6" | grep -qF "NG018" || SA6_OK=1
+check SA6-vitest-adds-ng018 "vitest workspace: NG018 included" "$SA6_OK"
+
+###############################################################################
+echo
+echo "== 1.1.0: skills use the current resource() API =="
+###############################################################################
+
+# Angular v20 renamed resource()'s `request` option to `params` (and the
+# loader argument with it). The skills must not teach the removed shape.
+R4_OK=0
+python3 - "$ROOT" <<'PY' 2>/dev/null || R4_OK=1
+import glob, os, re, sys
+bad = []
+for p in glob.glob(os.path.join(sys.argv[1], "skills", "*", "SKILL.md")):
+    txt = open(p, encoding="utf-8").read()
+    for pat in (r"\brequest:\s*\(\)", r"\(\{\s*request\s*\}\)"):
+        if re.search(pat, txt):
+            bad.append("%s: %s" % (os.path.basename(os.path.dirname(p)), pat))
+assert not bad, bad
+PY
+check R4-resource-params-api "no skill uses resource({ request }) -- it is params since v20" "$R4_OK"
+
+###############################################################################
+echo
+echo "== 1.1.0: false-positive fixes (NG010, NG012, NG016, NG105) =="
+###############################################################################
+
+cd "$V22" || exit 1
+
+# NG010: the chain start is found by walking back at paren depth 0, so an
+# arrow function inside an earlier operator no longer truncates the chain.
+run "$(write_json "$V22/src/app/a.ts" 'export class A {
+  constructor() { this.obs$.pipe(takeUntilDestroyed(), map((x) => x.id)).subscribe((v) => this.v.set(v)); }
+}')" bash "$HOOK_LINT" pre
+expect FP-N010-teardown-before-arrow-op 0 none ""
+
+run "$(write_json "$V22/src/app/a.ts" 'export class A {
+  constructor() { this.obs$.pipe(take(1), filter((x) => { return !!x; })).subscribe(f); }
+}')" bash "$HOOK_LINT" pre
+expect FP-N010-teardown-before-block-arrow 0 none ""
+
+run "$(write_json "$V22/src/app/a.ts" 'export class A {
+  constructor() { this.obs$.pipe(map((x) => x.id)).subscribe(f); }
+}')" bash "$HOOK_LINT" pre
+expect FP-N010-arrow-op-no-teardown-still-fires 2 err "NG010"
+
+# A teardown in an enclosing call does not cover an inner subscribe.
+run "$(write_json "$V22/src/app/a.ts" 'export class A {
+  constructor() { take(this.obs$.subscribe(f)); }
+}')" bash "$HOOK_LINT" pre
+expect FP-N010-enclosing-call-not-teardown 2 err "NG010"
+
+# NG012: signal .set()/.update() take exactly one argument; a two-argument
+# .set() is a Map, HttpParams, HttpHeaders, URLSearchParams or FormData.
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { const p = new HttpParams().set("q", this.q()); this.log(p); });')" bash "$HOOK_LINT" pre
+expect FP-N012-httpparams-set 0 none ""
+
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { this.cache.set(this.id(), { at: Date.now(), v: 1 }); });')" bash "$HOOK_LINT" pre
+expect FP-N012-map-set-two-args 0 none ""
+
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { this.state.set({ a: this.a(), b: this.b() }); });')" bash "$HOOK_LINT" pre
+expect FP-N012-object-arg-still-fires 2 err "NG012"
+
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { this.pair.set([this.a(), this.b()]); });')" bash "$HOOK_LINT" pre
+expect FP-N012-array-arg-still-fires 2 err "NG012"
+
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { this.label.set(fmt("a, b", this.a())); });')" bash "$HOOK_LINT" pre
+expect FP-N012-comma-in-string-still-fires 2 err "NG012"
+
+# NG016: judge the value, not just the key name.
+ENV="$V22/src/environments/environment.ts"
+run "$(write_json "$ENV" 'export const environment = { storageKey: "app-theme", hotkey: "ctrl+k" };')" bash "$HOOK_LINT" pre
+expect FP-N016-storage-key-name 0 none ""
+
+run "$(write_json "$ENV" 'export const environment = { firebase: { apiKey: "AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY", authDomain: "demo.firebaseapp.com" } };')" bash "$HOOK_LINT" pre
+expect FP-N016-firebase-web-key-public 0 none ""
+
+run "$(write_json "$ENV" 'export const environment = { cacheKeyPrefix: "my-app-user-preferences-v2" };')" bash "$HOOK_LINT" pre
+expect FP-N016-long-readable-value 0 none ""
+
+run "$(write_json "$ENV" 'export const environment = { dbPassword: "hunter2" };')" bash "$HOOK_LINT" pre
+expect FP-N016-password-any-value-fires 2 err "NG016"
+
+run "$(write_json "$ENV" 'export const environment = { githubToken: "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8" };')" bash "$HOOK_LINT" pre
+expect FP-N016-known-prefix-fires 2 err "NG016"
+
+run "$(write_json "$ENV" 'export const environment = { apiKey: "q8ZtV3mK1xN7pR4wL9sB2dH6fJ0cY5gT" };')" bash "$HOOK_LINT" pre
+expect FP-N016-high-entropy-key-fires 2 err "NG016"
+
+# NG105: an injected DOCUMENT (this.document) is the rule's own fix.
+post_file "$V22/src/app/d.component.ts" 'export class D {
+  private readonly document = inject(DOCUMENT);
+  focus() { this.document.body.classList.add("x"); }
+}'
+expect FP-N105-injected-document 0 none ""
+
+post_file "$V22/src/app/d.component.ts" 'export class D { w() { return window.innerWidth; } }'
+expect FP-N105-global-window-still-fires 2 err "NG105"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== 2d: the profile lives in the plugin data dir, refreshes itself =="
+###############################################################################
+
+# P1: detection writes nothing into the workspace.
+P1="$TMPROOT/p1"; ng_workspace "$P1" "22.0.0"; cd "$P1" || exit 1
+run "" bash "$DETECT"
+P1_OK=0
+[ -f "$(profile_of "$P1")" ] || P1_OK=1
+[ -z "$(find "$P1" -name '.angular-guide-*' 2>/dev/null)" ] || P1_OK=1
+printf '%s' "$OUT" | grep -qF "$CLAUDE_PLUGIN_DATA" || P1_OK=1
+check P1-profile-outside-workspace "profile cached under CLAUDE_PLUGIN_DATA, nothing written in the workspace" "$P1_OK"
+
+# P2: a profile older than package.json is re-detected by the next hook,
+# so an `ng update` mid-session takes effect without a new session.
+P2="$TMPROOT/p2"; ng_workspace "$P2" "21.0.0"; mkdir -p "$P2/src/app"; cd "$P2" || exit 1
+bash "$DETECT" >/dev/null 2>&1
+ONPUSH='@Component({ changeDetection: ChangeDetectionStrategy.OnPush }) export class A {}'
+run "$(write_json "$P2/src/app/a.ts" "$ONPUSH")" bash "$HOOK_LINT" pre
+P2_OK=0; [ "$CODE" = "0" ] || P2_OK=1
+ng_workspace "$P2" "22.0.0"
+python3 -I -c 'import os,sys,time; t=time.time()+5; os.utime(sys.argv[1], (t, t))' "$P2/package.json"
+run "$(write_json "$P2/src/app/a.ts" "$ONPUSH")" bash "$HOOK_LINT" pre
+[ "$CODE" = "2" ] || P2_OK=1
+check P2-stale-profile-refreshes "package.json newer than the profile -> re-detected (v21 -> v22 turns NG006 on)" "$P2_OK"
+
+# P3: a workspace never seen at SessionStart is detected on first use.
+P3="$TMPROOT/p3"; ng_workspace "$P3" "22.0.0"; mkdir -p "$P3/src/app"
+cd "$TMPROOT" || exit 1
+run "$(write_json "$P3/src/app/a.ts" '@Component({ standalone: true }) export class A {}')" bash "$HOOK_LINT" pre
+expect P3-lazy-detection 2 err "NG001"
+
+# P4: a monorepo session started at the repo root (I5) records which
+# workspace it found, so hooks running from the root find it too.
+P4=$(sa_context "$I5A")
+P4_OK=0
+printf '%s' "$P4" | grep -qF "NG001" || P4_OK=1
+check P4-monorepo-root-index "subagent started at the monorepo root gets the nested workspace's rules" "$P4_OK"
+
+# P5: without CLAUDE_PLUGIN_DATA (older Claude Code), fall back to the XDG cache.
+P5="$TMPROOT/p5"; ng_workspace "$P5" "22.0.0"; cd "$P5" || exit 1
+env -u CLAUDE_PLUGIN_DATA XDG_CACHE_HOME="$TMPROOT/xdg" bash "$DETECT" >/dev/null 2>&1
+P5_OK=0
+[ -n "$(find "$TMPROOT/xdg/angular-guide" -name '*.json' 2>/dev/null)" ] || P5_OK=1
+check P5-xdg-fallback "no CLAUDE_PLUGIN_DATA -> profile under XDG_CACHE_HOME/angular-guide" "$P5_OK"
+
+# P6: the profile's plugin_version comes from VERSION, not a hardcoded copy.
+P6_OK=0
+grep -q "\"plugin_version\": \"$(tr -d '[:space:]' < "$ROOT/VERSION")\"" "$(profile_of "$P1")" || P6_OK=1
+grep -q 'PLUGIN_VERSION="' "$ROOT/scripts/detect_project.sh" && P6_OK=1
+check P6-version-single-source "plugin_version read from VERSION" "$P6_OK"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== 2c: bash guard runs only in Angular workspaces, on parsed commands =="
+###############################################################################
+
+# Outside an Angular workspace the guard does nothing at all.
+cd "$SA_NONNG" || exit 1
+for cmd in 'rm -rf node_modules package-lock.json' 'ng build --prod' "$PUSH $FORCE origin main"; do
+  run "$(bash_json "$cmd")" bash "$BASH_GUARD"
+  expect "C-scope-non-angular: $cmd" 0 none ""
+done
+
+# Rules match commands, not text inside quoted arguments.
+cd "$WORK" || exit 1
+run "$(bash_json "echo 'never rm -rf node_modules pnpm-lock.yaml'")" bash "$BASH_GUARD"
+expect C-text-echo-quoted 0 none ""
+run "$(bash_json 'git commit -m "docs: why rm -rf pnpm-lock.yaml and ng build --prod are bad"')" bash "$BASH_GUARD"
+expect C-text-commit-message 0 none ""
+run "$(bash_json "$PUSH origin main && rm $FORCE tmp.txt")" bash "$BASH_GUARD"
+expect C-force-belongs-to-another-command 0 none ""
+
+# ...but a real command in any position, or wrapped, is still parsed.
+run "$(bash_json 'cd src && ng build --prod')" bash "$BASH_GUARD"
+expect C-second-command 2 err "BG002"
+run "$(bash_json 'npx ng build --prod')" bash "$BASH_GUARD"
+expect C-npx-ng 2 err "BG002"
+run "$(bash_json 'bash -c "ng update @angular/core --force"')" bash "$BASH_GUARD"
+expect C-bash-c-string 2 err "BG006"
+run "$(bash_json 'rm pnpm-lock.yaml')" bash "$BASH_GUARD"
+expect C-rm-lockfile-without-r 2 err "BG005"
+
+# BG004 also covers the package-manager test script when it runs ng test.
+python3 -I -c '
+import json, sys
+p = sys.argv[1] + "/package.json"
+d = json.load(open(p)); d["scripts"] = {"test": "ng test"}; json.dump(d, open(p, "w"))
+' "$WORK"
+run "$(bash_json 'pnpm test')" bash "$BASH_GUARD"
+expect C-pm-test-runs-ng-test 2 err "BG004"
+run "$(bash_json 'npm run test')" bash "$BASH_GUARD"
+expect C-npm-run-test 2 err "BG004"
+run "$(bash_json 'npm test -- --watch=false')" bash "$BASH_GUARD"
+expect C-npm-test-passthrough-nowatch-ok 0 none ""
+python3 -I -c '
+import json, sys
+p = sys.argv[1] + "/package.json"
+d = json.load(open(p)); d["scripts"] = {"test": "ng test --no-watch"}; json.dump(d, open(p, "w"))
+' "$WORK"
+run "$(bash_json 'pnpm test')" bash "$BASH_GUARD"
+expect C-pm-test-script-already-nowatch-ok 0 none ""
+
+# BG001: `+ref` forces that ref; HEAD names the checked-out branch;
+# combined short flags still carry -f.
+cd "$GITMAIN" || exit 1
+run "$(bash_json "$PUSH origin +main")" bash "$BASH_GUARD"
+expect C-plus-refspec-main 2 err "BG001"
+run "$(bash_json "$PUSH origin +feature/x")" bash "$BASH_GUARD"
+expect C-plus-refspec-feature-ok 0 none ""
+run "$(bash_json "$PUSH $FORCE origin HEAD")" bash "$BASH_GUARD"
+expect C-head-on-main 2 err "BG001"
+run "$(bash_json "$PUSH -fu origin main")" bash "$BASH_GUARD"
+expect C-combined-short-flags 2 err "BG001"
+cd "$GITFEAT" || exit 1
+run "$(bash_json "$PUSH $FORCE origin HEAD")" bash "$BASH_GUARD"
+expect C-head-on-feature-ok 0 none ""
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== 2a: pre-write rules block only violations the edit introduces =="
+###############################################################################
+
+cd "$V22" || exit 1
+LEGACY="$V22/src/app/legacy.component.ts"
+LEGACY_SRC='@Component({ selector: "app-legacy", template: `<div *ngIf="open">{{ title }}</div>` })
+export class Legacy {
+  title = "a";
+  parse(raw: any) { return raw; }
+}'
+
+# An unrelated edit to a file that already has violations goes through.
+printf '%s' "$LEGACY_SRC" > "$LEGACY"
+run "$(edit_json "$LEGACY" 'title = "a"' 'title = "b"')" bash "$HOOK_LINT" pre
+expect N-unrelated-edit-in-legacy-file 0 none ""
+
+# Adding another instance of a rule the file already breaks is still blocked,
+# and the message says only the new one is the problem.
+run "$(edit_json "$LEGACY" '{{ title }}</div>' '{{ title }}</div><p *ngIf="x">y</p>')" bash "$HOOK_LINT" pre
+expect N-adds-another-ngif 2 err "NG003"
+N2_OK=0
+printf '%s' "$ERR" | grep -qF "already had 1" || N2_OK=1
+check N-message-names-preexisting "finding says how many were already there" "$N2_OK"
+
+# A new rule broken by the edit blocks even though other rules were already broken.
+run "$(edit_json "$LEGACY" 'title = "a";' 'title = "a"; @Input() x = 1;')" bash "$HOOK_LINT" pre
+expect N-new-rule-in-legacy-file 2 err "NG005"
+
+# A Write that rewrites an existing file is compared with what was on disk.
+run "$(write_json "$LEGACY" "${LEGACY_SRC/title = \"a\"/title = \"c\"}")" bash "$HOOK_LINT" pre
+expect N-write-rewrite-keeps-existing 0 none ""
+
+# A Write that creates a file has nothing to compare with.
+run "$(write_json "$V22/src/app/fresh.ts" 'export const x: any = 1;')" bash "$HOOK_LINT" pre
+expect N-write-new-file 2 err "NG007"
+rm -f "$LEGACY"
+
+# NG103 matches a decorator object split across lines.
+post_file "$V22/src/app/s.ts" '@Injectable({
+  providedIn: "root",
+})
+export class S {}'
+expect N103-multiline-providedin 2 err "NG103"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== 2b: turning rules off -- settings and inline ignore comments =="
+###############################################################################
+
+cd "$V22" || exit 1
+
+# Per user: the plugin's userConfig option reaches hooks as
+# CLAUDE_PLUGIN_OPTION_DISABLED_RULES.
+run "$(write_json "$V22/src/app/a.ts" 'const x: any = 1;')" env CLAUDE_PLUGIN_OPTION_DISABLED_RULES="NG007" bash "$HOOK_LINT" pre
+expect OFF-user-option-disables-rule 0 none ""
+run "$(write_json "$V22/src/app/a.ts" 'export class A { @Input() x = 1; }')" env CLAUDE_PLUGIN_OPTION_DISABLED_RULES="NG007" bash "$HOOK_LINT" pre
+expect OFF-other-rules-still-run 2 err "NG005"
+
+# Per project: ANGULAR_GUIDE_DISABLED_RULES (committable via .claude/settings.json
+# `env`). Case and separators are forgiving; BG rules work too.
+run "$(write_json "$V22/src/app/a.ts" 'const x: any = 1;')" env ANGULAR_GUIDE_DISABLED_RULES="ng007, bg002" bash "$HOOK_LINT" pre
+expect OFF-project-env-disables-ng 0 none ""
+run "$(bash_json 'ng build --prod')" env ANGULAR_GUIDE_DISABLED_RULES="ng007, bg002" bash "$BASH_GUARD"
+expect OFF-project-env-disables-bg 0 none ""
+
+# Subagents are not told about rules that are off.
+cd "$V22" || exit 1
+run '{"hook_event_name":"SubagentStart"}' env ANGULAR_GUIDE_DISABLED_RULES="NG012" bash "$SUBAGENT"
+OFF5_OK=0
+printf '%s' "$OUT" | grep -qF "NG011" || OFF5_OK=1
+printf '%s' "$OUT" | grep -qF "NG012" && OFF5_OK=1
+check OFF-subagent-omits-disabled "disabled rule left out of the subagent rules" "$OFF5_OK"
+
+# Inline: angular-guide-ignore-next-line <IDs> -- <reason>
+run "$(write_json "$V22/src/app/bus.service.ts" 'export class Bus {
+  constructor() {
+    // angular-guide-ignore-next-line NG010 -- app-lifetime websocket, never torn down
+    this.socket$.subscribe((m) => this.dispatch(m));
+  }
+}')" bash "$HOOK_LINT" pre
+expect IGN-next-line 0 none ""
+
+# Without a reason the directive is not applied, and the finding says why.
+run "$(write_json "$V22/src/app/bus.service.ts" 'export class Bus {
+  constructor() {
+    // angular-guide-ignore-next-line NG010
+    this.socket$.subscribe((m) => this.dispatch(m));
+  }
+}')" bash "$HOOK_LINT" pre
+expect IGN-needs-reason 2 err "NG010"
+IGN2_OK=0
+printf '%s' "$ERR" | grep -qF -- "-- reason" || IGN2_OK=1
+check IGN-reason-explained "finding explains the ignore was not applied for lack of a reason" "$IGN2_OK"
+
+# It only covers the rules it names.
+run "$(write_json "$V22/src/app/bus.service.ts" '// angular-guide-ignore-next-line NG010 -- legacy
+const x: any = this.a$.subscribe();')" bash "$HOOK_LINT" pre
+expect IGN-other-rule-on-line-still-fires 2 err "NG007"
+
+# angular-guide-ignore-line, as a trailing comment.
+run "$(write_json "$V22/src/app/a.ts" 'const x: any = lib(); // angular-guide-ignore-line NG007 -- untyped third-party API')" bash "$HOOK_LINT" pre
+expect IGN-same-line 0 none ""
+
+# angular-guide-ignore-file, in an HTML comment.
+run "$(write_json "$V22/src/app/old.html" '<!-- angular-guide-ignore-file NG003 -- legacy screen, being replaced -->
+<div *ngIf="a">a</div>
+<div *ngIf="b">b</div>')" bash "$HOOK_LINT" pre
+expect IGN-file-html 0 none ""
+
+# A directive inside a string literal is not a comment and does nothing.
+run "$(write_json "$V22/src/app/a.ts" 'const s = "angular-guide-ignore-file NG007 -- nope"; const y: any = 1;')" bash "$HOOK_LINT" pre
+expect IGN-string-is-not-a-comment 2 err "NG007"
+
+# Advisory rules honour it too.
+post_file "$V22/src/app/sprite.component.html" '<!-- angular-guide-ignore-next-line NG104 -- inline SVG sprite, not a photo -->
+<img src="/assets/sprite.svg" alt="">'
+expect IGN-post-rule 0 none ""
+
+# The userConfig option is declared in the manifest.
+OFF6_OK=0
+python3 -I -c '
+import json, sys
+o = json.load(open(sys.argv[1]))["userConfig"]["disabled_rules"]
+assert o["type"] == "string" and o["title"] and o["description"]
+' "$ROOT/.claude-plugin/plugin.json" 2>/dev/null || OFF6_OK=1
+check OFF-userconfig-declared "plugin.json declares userConfig.disabled_rules" "$OFF6_OK"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== 3a: rule text comes from one registry =="
+###############################################################################
+
+# With every gate open (v22, zoneless, vitest), subagents get every blocking rule.
+GEN1_OK=0
+SA_ALL=$(sa_context "$VT")
+for id in $(python3 -I -c '
+import sys; sys.path.insert(0, sys.argv[1]); import rules
+print(" ".join(r["id"] for r in rules.RULES if r["hook"] == "pre"))' "$ROOT/scripts"); do
+  printf '%s' "$SA_ALL" | grep -qF "$id" || GEN1_OK=1
+done
+check GEN-subagent-covers-every-blocking-rule "all-gates-open subagent context lists every pre rule in rules.py" "$GEN1_OK"
+
+# --check is load-bearing: a hand edit to a generated table fails it.
+GENROOT="$TMPROOT/gen"; mkdir -p "$GENROOT"
+cp "$ROOT/README.md" "$ROOT/CLAUDE.md.template" "$GENROOT/"
+python3 -I -c '
+import sys
+p = sys.argv[1] + "/README.md"; s = open(p).read()
+open(p, "w").write(s.replace("| NG001 |", "| NG001 | hand-edited |", 1))' "$GENROOT"
+run "" python3 -I "$ROOT/tools/gen_docs.py" --check --root "$GENROOT"
+expect GEN-check-detects-stale-readme 1 out "stale generated docs: README.md"
+run "" python3 -I "$ROOT/tools/gen_docs.py" --root "$GENROOT"
+run "" python3 -I "$ROOT/tools/gen_docs.py" --check --root "$GENROOT"
+expect GEN-regenerate-fixes-it 0 none ""
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== 3b: advisories are not repeated within a session =="
+###############################################################################
+
+cd "$V22" || exit 1
+# post_in_session <session> <path> <content>
+post_in_session() {
+  printf '%s' "$3" > "$2"
+  run "$(python3 -I -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"tool_name":"Edit","tool_input":{"file_path":sys.argv[2]}}))' "$1" "$2")" bash "$HOOK_LINT" post
+}
+HERO="$V22/src/app/hero.component.html"
+post_in_session s1 "$HERO" '<img src="/a.png" alt="">'
+expect ADV-first-report 2 err "NG104"
+post_in_session s1 "$HERO" '<h1>Hi</h1><img src="/a.png" alt="">'
+expect ADV-unchanged-count-silent 0 none ""
+post_in_session s1 "$HERO" '<h1>Hi</h1><img src="/a.png" alt=""><img src="/b.png" alt="">'
+expect ADV-new-instance-reported 2 err "NG104"
+post_in_session s2 "$HERO" '<h1>Hi</h1><img src="/a.png" alt=""><img src="/b.png" alt="">'
+expect ADV-new-session-reports-again 2 err "NG104"
+# Fixing one and later re-adding it reports again.
+post_in_session s1 "$HERO" '<h1>Hi</h1><img src="/a.png" alt="">'
+post_in_session s1 "$HERO" '<h1>Hi</h1><img src="/a.png" alt=""><img src="/c.png" alt="">'
+expect ADV-readded-after-fix-reported 2 err "NG104"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== 3c: one release step sets the version everywhere; no unused profile fields =="
+###############################################################################
+
+REL="$TMPROOT/release"; mkdir -p "$REL/.claude-plugin"
+cp "$ROOT/VERSION" "$REL/"
+cp "$ROOT/.claude-plugin/plugin.json" "$ROOT/.claude-plugin/marketplace.json" "$REL/.claude-plugin/"
+# A fixture CHANGELOG, not the repo's: right after a real release the repo's
+# has no Unreleased section, which would make these tests depend on timing.
+printf '# Changelog\n\n## Unreleased\n\n- Something.\n\n## 1.0.0 — 2026-09-06\n' > "$REL/CHANGELOG.md"
+run "" python3 -I "$ROOT/tools/release.py" 9.8.7 --date 2030-01-02 --root "$REL"
+REL_OK=0
+[ "$CODE" = "0" ] || REL_OK=1
+[ "$(tr -d '[:space:]' < "$REL/VERSION")" = "9.8.7" ] || REL_OK=1
+python3 -I -c '
+import json, sys
+r = sys.argv[1]
+assert json.load(open(r + "/.claude-plugin/plugin.json"))["version"] == "9.8.7"
+assert json.load(open(r + "/.claude-plugin/marketplace.json"))["plugins"][0]["version"] == "9.8.7"
+c = open(r + "/CHANGELOG.md").read()
+assert "## 9.8.7 — 2030-01-02" in c and "## Unreleased" not in c
+' "$REL" 2>/dev/null || REL_OK=1
+check REL-sets-every-version "release.py updates VERSION, both manifests, and the CHANGELOG heading" "$REL_OK"
+
+# No Unreleased section means nothing to release: refuse, change nothing.
+run "" python3 -I "$ROOT/tools/release.py" 9.8.8 --root "$REL"
+REL2_OK=0
+[ "$CODE" != "0" ] || REL2_OK=1
+[ "$(tr -d '[:space:]' < "$REL/VERSION")" = "9.8.7" ] || REL2_OK=1
+check REL-refuses-without-unreleased "no Unreleased section -> non-zero exit, files untouched" "$REL2_OK"
+
+run "" python3 -I "$ROOT/tools/release.py" banana --root "$REL"
+expect REL-rejects-bad-version 1 err "version"
+
+PF_OK=0
+grep -q '"projects"' "$(profile_of "$V22")" && PF_OK=1
+check PF-no-projects-field "profile no longer carries the unused projects list" "$PF_OK"
+
+# NG104: NgOptimizedImage does not support inline data: URIs.
+cd "$V22" || exit 1
+post_file "$V22/src/app/icon.html" '<img src="data:image/svg+xml;base64,PHN2Zz4=" alt="">'
+expect N104-data-uri-ok 0 none ""
+post_file "$V22/src/app/icon.html" "<img alt='' src='DATA:image/png;base64,AAA'>
+<img src=\"/assets/photo.jpg\" alt=\"\">"
+expect N104-data-uri-does-not-hide-real-img 2 err "NG104"
 
 cd "$ROOT" || exit 1
 

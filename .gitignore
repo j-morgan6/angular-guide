@@ -2,3 +2,4 @@ node_modules/
 .angular-guide-project.json
 .DS_Store
 .superpowers/
+__pycache__/

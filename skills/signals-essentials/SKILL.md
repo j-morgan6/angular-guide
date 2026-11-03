@@ -1,9 +1,8 @@
 ---
 name: signals-essentials
-description: MANDATORY for ALL signal and reactivity work. Invoke before writing signal, computed, linkedSignal, effect, or resource.
-file_patterns:
+description: MANDATORY for ALL Angular signal and reactivity work. Invoke before writing signal, computed, linkedSignal, effect, or resource.
+paths:
   - "**/*.ts"
-auto_suggest: true
 ---
 
 # Signals Essentials
@@ -234,8 +233,8 @@ export class UserLookup {
   private readonly userService = inject(UserService);
 
   readonly userResource = resource({
-    request: () => this.userId(),
-    loader: ({ request }) => this.userService.fetch(request),
+    params: () => this.userId(),
+    loader: ({ params }) => this.userService.fetch(params),
   });
 }
 ```
