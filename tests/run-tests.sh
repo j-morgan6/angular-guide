@@ -1903,8 +1903,11 @@ echo "== 3c: one release step sets the version everywhere; no unused profile fie
 ###############################################################################
 
 REL="$TMPROOT/release"; mkdir -p "$REL/.claude-plugin"
-cp "$ROOT/VERSION" "$ROOT/CHANGELOG.md" "$REL/"
+cp "$ROOT/VERSION" "$REL/"
 cp "$ROOT/.claude-plugin/plugin.json" "$ROOT/.claude-plugin/marketplace.json" "$REL/.claude-plugin/"
+# A fixture CHANGELOG, not the repo's: right after a real release the repo's
+# has no Unreleased section, which would make these tests depend on timing.
+printf '# Changelog\n\n## Unreleased\n\n- Something.\n\n## 1.0.0 — 2026-09-06\n' > "$REL/CHANGELOG.md"
 run "" python3 -I "$ROOT/tools/release.py" 9.8.7 --date 2030-01-02 --root "$REL"
 REL_OK=0
 [ "$CODE" = "0" ] || REL_OK=1

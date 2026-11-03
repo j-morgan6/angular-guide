@@ -2,7 +2,7 @@
 
 All notable changes to `angular-guide` are documented in this file.
 
-## Unreleased
+## 1.1.0 — 2026-11-03
 
 ### Fixed
 

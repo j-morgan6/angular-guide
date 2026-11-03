@@ -1,6 +1,6 @@
 {
   "name": "angular-guide",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Enforce modern Angular (v20+, signals-first, zoneless) with deterministic hooks. Complements Angular's official agent skills and MCP server.",
   "author": {
     "name": "Joseph Morgan",
