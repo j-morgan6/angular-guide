@@ -1004,8 +1004,8 @@ S2_OK=0
 python3 - "$ROOT" <<'PY' 2>/dev/null || S2_OK=1
 import os, re, sys, glob
 root = sys.argv[1]
-lint = open(os.path.join(root, "scripts", "hook-lint.sh"), encoding="utf-8").read()
-defined = set(re.findall(r"check_(ng\d{3})\s*\(\)", lint))
+lint = open(os.path.join(root, "scripts", "lint.py"), encoding="utf-8").read()
+defined = set(re.findall(r"def check_(ng\d{3})\s*\(", lint))
 defined = {d.upper() for d in defined}
 guard = open(os.path.join(root, "scripts", "bash-guard.sh"), encoding="utf-8").read()
 defined |= set(re.findall(r"\b(BG\d{3})\b", guard))
@@ -1023,8 +1023,8 @@ S3_OK=0
 python3 - "$ROOT" <<'PY' 2>/dev/null || S3_OK=1
 import os, re, sys
 root = sys.argv[1]
-lint = open(os.path.join(root, "scripts", "hook-lint.sh"), encoding="utf-8").read()
-pre = {d.upper() for d in re.findall(r"check_(ng0\d{2})\s*\(\)", lint)}
+lint = open(os.path.join(root, "scripts", "lint.py"), encoding="utf-8").read()
+pre = {d.upper() for d in re.findall(r"def check_(ng0\d{2})\s*\(", lint)}
 sub = open(os.path.join(root, "scripts", "subagent-rules.sh"), encoding="utf-8").read()
 cited = set(re.findall(r"\b(NG0\d{2})\b", sub))
 missing = sorted(pre - cited)
@@ -1047,9 +1047,9 @@ R2_OK=0
 python3 - "$ROOT" <<'PY' 2>/dev/null || R2_OK=1
 import os, re, sys
 root = sys.argv[1]
-lint = open(os.path.join(root, "scripts", "hook-lint.sh"), encoding="utf-8").read()
+lint = open(os.path.join(root, "scripts", "lint.py"), encoding="utf-8").read()
 guard = open(os.path.join(root, "scripts", "bash-guard.sh"), encoding="utf-8").read()
-implemented = {d.upper() for d in re.findall(r"check_(ng\d{3})\s*\(\)", lint)}
+implemented = {d.upper() for d in re.findall(r"def check_(ng\d{3})\s*\(", lint)}
 implemented |= set(re.findall(r"\b(BG\d{3})\b", guard))
 readme = open(os.path.join(root, "README.md"), encoding="utf-8").read()
 documented = set(re.findall(r"\b((?:NG|BG)\d{3})\b", readme))
@@ -1708,6 +1708,54 @@ expect C-combined-short-flags 2 err "BG001"
 cd "$GITFEAT" || exit 1
 run "$(bash_json "$PUSH $FORCE origin HEAD")" bash "$BASH_GUARD"
 expect C-head-on-feature-ok 0 none ""
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== 2a: pre-write rules block only violations the edit introduces =="
+###############################################################################
+
+cd "$V22" || exit 1
+LEGACY="$V22/src/app/legacy.component.ts"
+LEGACY_SRC='@Component({ selector: "app-legacy", template: `<div *ngIf="open">{{ title }}</div>` })
+export class Legacy {
+  title = "a";
+  parse(raw: any) { return raw; }
+}'
+
+# An unrelated edit to a file that already has violations goes through.
+printf '%s' "$LEGACY_SRC" > "$LEGACY"
+run "$(edit_json "$LEGACY" 'title = "a"' 'title = "b"')" bash "$HOOK_LINT" pre
+expect N-unrelated-edit-in-legacy-file 0 none ""
+
+# Adding another instance of a rule the file already breaks is still blocked,
+# and the message says only the new one is the problem.
+run "$(edit_json "$LEGACY" '{{ title }}</div>' '{{ title }}</div><p *ngIf="x">y</p>')" bash "$HOOK_LINT" pre
+expect N-adds-another-ngif 2 err "NG003"
+N2_OK=0
+printf '%s' "$ERR" | grep -qF "already had 1" || N2_OK=1
+check N-message-names-preexisting "finding says how many were already there" "$N2_OK"
+
+# A new rule broken by the edit blocks even though other rules were already broken.
+run "$(edit_json "$LEGACY" 'title = "a";' 'title = "a"; @Input() x = 1;')" bash "$HOOK_LINT" pre
+expect N-new-rule-in-legacy-file 2 err "NG005"
+
+# A Write that rewrites an existing file is compared with what was on disk.
+run "$(write_json "$LEGACY" "${LEGACY_SRC/title = \"a\"/title = \"c\"}")" bash "$HOOK_LINT" pre
+expect N-write-rewrite-keeps-existing 0 none ""
+
+# A Write that creates a file has nothing to compare with.
+run "$(write_json "$V22/src/app/fresh.ts" 'export const x: any = 1;')" bash "$HOOK_LINT" pre
+expect N-write-new-file 2 err "NG007"
+rm -f "$LEGACY"
+
+# NG103 matches a decorator object split across lines.
+post_file "$V22/src/app/s.ts" '@Injectable({
+  providedIn: "root",
+})
+export class S {}'
+expect N103-multiline-providedin 2 err "NG103"
 
 cd "$ROOT" || exit 1
 

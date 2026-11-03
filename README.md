@@ -82,7 +82,7 @@ that election — which is exactly the gap the hooks in this plugin exist to bac
 
 Every implemented rule ID below is kept in sync with this table by the test suite
 (`R2-readme-documents-every-rule` in `tests/run-tests.sh`): it parses `check_ngNNN()`
-function names out of `scripts/hook-lint.sh` and `BGNNN` identifiers out of
+function names out of `scripts/lint.py` and `BGNNN` identifiers out of
 `scripts/bash-guard.sh`, and fails the build if any of them is missing from this file.
 
 ### BG001–BG006 — Bash guard (`PreToolUse` on `Bash`)
@@ -109,12 +109,16 @@ are not expanded, so a rule inside one is not seen.
 
 ### NG001–NG018 — blocking checks (`PreToolUse` on `Write`/`Edit`, `hook-lint.sh pre`)
 
-Run against the **effective post-edit content** — for `Write`, the pending `content`; for
-`Edit`, the on-disk file with `old_string` replaced by `new_string` — so a violation
-introduced into existing context is caught before it's written, not after. A finding
-exits 2 and blocks the write. Only `.ts` and `.html` files are considered; comments
-(`//`, `/* */`, `<!-- -->`, including inside template-literal backticks) are stripped
-before matching.
+Each rule runs twice: against the file **before** the change (what is on disk, or nothing
+for a new file) and **after** it (a `Write`'s pending `content`, or the on-disk file with
+an `Edit`'s `old_string` replaced by `new_string`). A rule blocks only when it matches
+**more times after the change than before** — so an edit that introduces a violation
+into existing context is caught before it's written, but an unrelated edit to a file that
+already breaks a rule goes through, and adding another instance to such a file is
+blocked with a note saying how many were already there. A finding exits 2 and blocks the
+write. Only `.ts` and `.html` files are considered; comments (`//`, `/* */`, `<!-- -->`,
+including inside template-literal backticks) are stripped before matching. The rules live
+in `scripts/lint.py`, one `check_ngNNN()` function each.
 
 | ID | Catches | Fix | Gate |
 |---|---|---|---|
@@ -245,9 +249,8 @@ recall for being dependency-free and fast. Known false negatives:
   `takeUntil(`, `take(`, `first(`, `firstValueFrom`, `lastValueFrom`) is matched as plain
   substrings anywhere in the preceding chain — a coincidental match (e.g. a comment-like
   string literal containing `take(`) would suppress a real finding.
-- **NG004** matches against `$COLLAPSED` (the newline-flattened copy of the file), so a
-  constructor split across multiple lines is not the problem. Its real limitation is a
-  default-value expression that contains its own parentheses *before* the injected
+- **NG004** matches across lines, so a constructor split over several lines is not the
+  problem. Its real limitation is a default-value expression that contains its own parentheses *before* the injected
   parameter — e.g. `constructor(fn = () => 1, private http: HttpClient) {}` — which
   closes the rule's `[^)]*` match at the default value's `)` and leaves the injected
   parameter after it unseen (a documented, deliberate trade-off: a missed detection is
@@ -257,10 +260,8 @@ recall for being dependency-free and fast. Known false negatives:
 - **NG016** judges `key`/`token` values by shape (known prefixes, length, entropy). A
   short or low-entropy real secret under a `key`/`token` name is missed; a long random
   non-secret identifier under one is flagged.
-- **NG103** greps `$CODE_PATH` line-by-line with no multiline flag, so — unlike NG004 —
-  it genuinely can miss a `@Injectable({ providedIn: 'root' })` whose braces are split
-  across lines in a way that puts `providedIn` on a different line than the pattern
-  expects.
+- **Blocking compares counts per rule**, not positions. An edit that removes one
+  instance of a rule and adds another elsewhere in the same file is not blocked.
 - An **unterminated `<!--` or `/*`** in a source file only disables enforcement for the
   rest of that one line — the comment stripper blanks the remainder of the line it opens
   on and resumes normal scanning from the next line, rather than swallowing everything

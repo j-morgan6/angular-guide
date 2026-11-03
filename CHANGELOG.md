@@ -43,6 +43,15 @@ All notable changes to `angular-guide` are documented in this file.
   `npx ng ...`, `bash -c "..."`, `+main` refspecs, `-fu`-style combined flags,
   `git push -f origin HEAD`, `rm` of a lockfile without `-r`, and `npm`/`pnpm`/`yarn test`
   when the `test` script runs `ng test` in watch mode.
+- **Blocking rules only block what a change adds.** Each NG0xx rule runs on the file
+  before and after the change, and blocks only if it matches more times after. An
+  unrelated edit to a file with older code in it now goes through; adding another
+  instance of a rule the file already breaks is still blocked, with a note saying how
+  many were already there.
+- The Write/Edit rules moved from `hook-lint.sh` (bash plus eight inline Python passes)
+  into one Python module, `scripts/lint.py`. A pre-write check takes about 30 ms
+  instead of about 200 ms. NG103 now also matches `@Injectable({ ... })` split across
+  lines.
 - The plugin version is read from `VERSION` rather than a copy in `detect_project.sh`.
 
 - `data-loading` shows the call-site pattern for HTTP commands
