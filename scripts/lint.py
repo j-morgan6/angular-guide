@@ -28,6 +28,10 @@ import sys
 from collections import Counter
 
 SCRIPTS = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, SCRIPTS)
+
+import ag_profile  # noqa: E402
+import rules  # noqa: E402
 
 
 # ------------------------------------------------------------------ helpers
@@ -227,8 +231,6 @@ class Ctx:
         self.profile = profile
         self.ts = self.ext == "ts"
         self.spec = bool(re.search(r"\.(spec|test)\.ts$", file_path))
-        self.v20 = profile.get("standalone_default") is True
-        self.v22 = profile.get("onpush_default") is True
         self.component = (file_path.endswith(".component.ts") or "@Component" in self.code)
         self.newlines = [i for i, ch in enumerate(raw) if ch == "\n"]
         self.parse_ignores()
@@ -267,52 +269,41 @@ class Ctx:
 
 
 PRE, POST = "pre", "post"
-RULES = []
+CHECKS = {}
 
 
-def rule(rule_id, mode, message):
+def check(rule_id):
+    """Register the matcher for a rule; its words and gate are in rules.py."""
     def register(fn):
-        RULES.append((rule_id, mode, fn, message))
+        CHECKS[rule_id] = fn
         return fn
     return register
 
 
 # ------------------------------------------------------------- pre: NG001-018
 
-@rule("NG001", PRE, """🚫 NG001: `standalone: true` in a decorator.
-   💡 Fix: Delete the property. Standalone is the default since Angular v20 — writing it is redundant and signals a pre-v20 mental model.
-   See: angular-essentials skill""")
+@check("NG001")
 def check_ng001(c):
-    if not (c.v20 and c.ts):
+    if not c.ts:
         return []
     return find_all(r"standalone:\s*true", c.code)
 
 
-@rule("NG002", PRE, """🚫 NG002: `@NgModule` declaration.
-   💡 Fix: Use standalone components. Put shared providers in `providers` at bootstrap or on a route, and import components directly via the `imports` array.
-   See: angular-essentials skill""")
+@check("NG002")
 def check_ng002(c):
-    if not (c.v20 and c.ts):
+    if not c.ts:
         return []
     return find_all(r"@NgModule", c.code)
 
 
-@rule("NG003", PRE, """🚫 NG003: Legacy structural directive (`*ngIf` / `*ngFor` / `*ngSwitch`).
-   💡 Fix: Use native control flow — `@if (cond) { }`, `@for (x of xs; track x.id) { }`, `@switch (v) { @case (a) { } }`. It needs no imports, is faster, and is the only supported form going forward.
-   See: angular-essentials skill""")
+@check("NG003")
 def check_ng003(c):
-    if not c.v20:
-        return []
     return find_all(r"\*ngIf|\*ngFor|\*ngSwitch|\[ngSwitch\]", c.code)
 
 
-@rule("NG004", PRE, """🚫 NG004: Constructor-parameter dependency injection.
-   💡 Fix: Use the `inject()` function at field level:
-     private readonly http = inject(HttpClient);
-   It gives better type inference, works in field initializers and functional guards/interceptors, and avoids inheritance boilerplate.
-   See: angular-essentials skill""")
+@check("NG004")
 def check_ng004(c):
-    if not (c.v20 and c.ts):
+    if not c.ts:
         return []
     # Parameter properties are ordinary TypeScript in a plain value class
     # (`constructor(private amount: number)` on Money); they are only DI in a
@@ -327,31 +318,21 @@ def check_ng004(c):
                     r"[A-Za-z_$][A-Za-z0-9_$]*\s*:", c.code)
 
 
-@rule("NG005", PRE, """🚫 NG005: `@Input()` / `@Output()` decorator.
-   💡 Fix: Use the signal-based functions:
-     readonly name = input.required<string>();
-     readonly saved = output<Item>();
-     readonly value = model<string>("");
-   Signal inputs are readable in computed() without a lifecycle hook.
-   See: angular-essentials skill""")
+@check("NG005")
 def check_ng005(c):
-    if not (c.v20 and c.ts):
+    if not c.ts:
         return []
     return find_all(r"@Input\s*\(|@Output\s*\(", c.code)
 
 
-@rule("NG006", PRE, """🚫 NG006: Explicit `changeDetection: ChangeDetectionStrategy.OnPush`.
-   💡 Fix: Delete the property and its import. OnPush is the default strategy in Angular v22 — setting it explicitly is now noise.
-   See: performance-and-zoneless skill""")
+@check("NG006")
 def check_ng006(c):
-    if not (c.v22 and c.ts):
+    if not c.ts:
         return []
     return find_all(r"changeDetection:\s*ChangeDetectionStrategy\.OnPush", c.code)
 
 
-@rule("NG007", PRE, """🚫 NG007: `any` type detected.
-   💡 Fix: Use `unknown` when the type is genuinely uncertain and narrow it, or give the value its real type. `any` disables every check TypeScript exists to provide.
-   See: angular-essentials skill""")
+@check("NG007")
 def check_ng007(c):
     if not c.ts:
         return []
@@ -359,29 +340,19 @@ def check_ng007(c):
     return find_all(r":\s*any\b|\bas\s+any\b|<any>", blank_strings(c.code))
 
 
-@rule("NG008", PRE, """🚫 NG008: `ngClass` / `ngStyle`.
-   💡 Fix: Use native bindings — `[class.active]="isActive()"`, `[style.width.px]="w()"`, or `[class]="classRecord()"`. They need no import and avoid an extra directive instance per element.
-   See: angular-essentials skill""")
+@check("NG008")
 def check_ng008(c):
     return find_all(r"\[ngClass\]|\[ngStyle\]|\sngClass=|\sngStyle=", c.code)
 
 
-@rule("NG009", PRE, """🚫 NG009: `@HostBinding` / `@HostListener` decorator.
-   💡 Fix: Use the `host` object in the decorator metadata:
-     @Component({ host: { "[class.active]": "isActive()", "(click)": "onClick($event)" } })
-   It keeps host behaviour in one place and is statically analysable.
-   See: angular-essentials skill""")
+@check("NG009")
 def check_ng009(c):
     if not c.ts:
         return []
     return find_all(r"@HostBinding|@HostListener", c.code)
 
 
-@rule("NG010", PRE, """🚫 NG010: `.subscribe()` with no teardown in its chain.
-   💡 Fix: Prefer not subscribing at all — use the `async` pipe, `toSignal(obs$)`, or `httpResource()`. For a one-shot HTTP command, `await firstValueFrom(...)`. When you must subscribe, add teardown:
-     obs$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(...)
-   Manual subscriptions without teardown are the most common memory leak in Angular apps.
-   See: rxjs-interop skill""")
+@check("NG010")
 def check_ng010(c):
     if not c.ts or c.spec:
         return []
@@ -394,20 +365,14 @@ def check_ng010(c):
     return hits
 
 
-@rule("NG011", PRE, """🚫 NG011: `.mutate()` on a signal — the API was removed.
-   💡 Fix: Use `set()` with a new value, or `update()` with a pure transform:
-     this.items.update((xs) => [...xs, item]);
-   Signals compare by reference, so in-place mutation would not notify readers.
-   See: signals-essentials skill""")
+@check("NG011")
 def check_ng011(c):
     if not c.ts:
         return []
     return find_all(r"\.mutate\s*\(", c.code)
 
 
-@rule("NG012", PRE, """🚫 NG012: `effect()` writes a signal.
-   💡 Fix: Effects are for side effects that leave the reactive graph — logging, third-party DOM, analytics. Derived state belongs in `computed()`; writable state derived from other signals belongs in `linkedSignal()`. Writing signals inside an effect creates feedback loops and re-entrant change detection. Restructure first; only if the write cannot be expressed as `computed()` or `linkedSignal()` (e.g. resetting unrelated state in response to an event-like signal), isolate it in `untracked()` with a comment saying why.
-   See: signals-essentials skill""")
+@check("NG012")
 def check_ng012(c):
     if not c.ts:
         return []
@@ -429,12 +394,8 @@ def check_ng012(c):
     return sorted(hits)
 
 
-@rule("NG013", PRE, """🚫 NG013: `@for` without a `track` expression.
-   💡 Fix: Add a stable identity — `@for (item of items(); track item.id) { }`. `track` is mandatory; without it Angular cannot reuse DOM nodes and rebuilds the whole list on every change.
-   See: performance-and-zoneless skill""")
+@check("NG013")
 def check_ng013(c):
-    if not c.v20:
-        return []
     # The clause is extracted by balanced parens, not `[^)]*`: `@for (x of
     # xs(); track x.id)` calls a signal, and the first `)` closes `xs()`.
     hits = []
@@ -445,16 +406,12 @@ def check_ng013(c):
     return hits
 
 
-@rule("NG014", PRE, """🚫 NG014: `[innerHTML]` binding.
-   💡 Fix: Render text with interpolation, or compose real components. If you must render untrusted markup, sanitize it server-side and render through a vetted component — Angular sanitizes `[innerHTML]` but the pattern still invites XSS as soon as someone reaches for bypassSecurityTrust.
-   See: angular-essentials skill""")
+@check("NG014")
 def check_ng014(c):
     return find_all(r"\[innerHTML\]|\[outerHTML\]", c.code)
 
 
-@rule("NG015", PRE, """🚫 NG015: `bypassSecurityTrust*` call.
-   💡 Fix: This disables Angular XSS protection for that value. Sanitize upstream and render normally. If a genuine trusted-value case exists, it belongs in one reviewed, narrowly-scoped helper — never inline in a component.
-   See: angular-essentials skill""")
+@check("NG015")
 def check_ng015(c):
     if not c.ts:
         return []
@@ -480,9 +437,7 @@ def looks_issued(v):
     return entropy >= 4.2
 
 
-@rule("NG016", PRE, """🚫 NG016: Secret-shaped value in an environment file.
-   💡 Fix: `environment.ts` is compiled into the browser bundle — anything in it is public. Move the secret behind your backend and have the client call your API. Build-time injection does not help; the value still ships.
-   See: angular-essentials skill""")
+@check("NG016")
 def check_ng016(c):
     if not c.ts or not re.search(r"/environments?/|environment(\.[a-z]+)*\.ts$", c.file_path):
         return []
@@ -507,71 +462,49 @@ def check_ng016(c):
     return hits
 
 
-@rule("NG017", PRE, """🚫 NG017: `zone.js` import in a zoneless workspace.
-   💡 Fix: Remove the import. This app runs with `provideZonelessChangeDetection()`; loading zone.js re-introduces monkey-patching of every async API and negates the benefit.
-   See: performance-and-zoneless skill""")
+@check("NG017")
 def check_ng017(c):
-    if c.profile.get("zoneless") is not True:
-        return []
     return find_all(r"(import|require).*['\"]zone\.js", c.code)
 
 
-@rule("NG018", PRE, """🚫 NG018: Jasmine API in a Vitest workspace.
-   💡 Fix: Use the Vitest equivalents — `vi.fn()` for `jasmine.createSpy()`, `vi.spyOn()` for `spyOn()`, `expect.objectContaining()` for `jasmine.objectContaining()`. TestBed itself is unchanged.
-   See: testing-essentials skill""")
+@check("NG018")
 def check_ng018(c):
-    if c.profile.get("test_runner") != "vitest" or not c.ts:
+    if not c.ts:
         return []
     return find_all(r"\bjasmine\s*\.", c.code)
 
 
 # ------------------------------------------------------------ post: NG101-106
 
-@rule("NG101", POST, """⚠️  NG101: Route declared with an eager `component:` reference.
-   💡 Fix: Lazy-load it so the feature leaves the initial bundle:
-     { path: "admin", loadComponent: () => import("./admin/admin-page").then((m) => m.AdminPage) }
-   Eager routes are defensible for a small shell route — for a feature screen they are almost always a mistake.
-   See: performance-and-zoneless skill""")
+@check("NG101")
 def check_ng101(c):
     if not c.ts or not re.search(r"routes?\.ts$|\.routes\.ts$|routing", c.file_path):
         return []
     return find_all(r"\bcomponent:\s*[A-Z]", c.code)
 
 
-@rule("NG102", POST, """⚠️  NG102: Reactive Forms in a workspace where Signal Forms are stable.
-   💡 Fix: Prefer Signal Forms for new forms on v22+ — form state is signals, so it composes with computed() and needs no valueChanges subscription. Staying on Reactive Forms is correct when extending an existing Reactive Forms screen; starting a new one there is not.
-   See: angular-essentials skill""")
+@check("NG102")
 def check_ng102(c):
-    if c.profile.get("signal_forms_available") is not True or not c.ts or c.spec:
+    if not c.ts or c.spec:
         return []
     return find_all(r"\bFormBuilder\b|\bnew\s+FormGroup\b|\bfb\.group\(", c.code)
 
 
-@rule("NG103", POST, """⚠️  NG103: `@Injectable({ providedIn: "root" })`.
-   💡 Fix: On v22+ use the `@Service` decorator — it is the same root-provided singleton with less ceremony:
-     @Service()
-     export class ItemStore {}
-   See: state-management skill""")
+@check("NG103")
 def check_ng103(c):
-    if c.profile.get("service_decorator_available") is not True or not c.ts:
+    if not c.ts:
         return []
     return find_all(r"@Injectable\(\s*\{[^}]*providedIn:\s*['\"]root['\"]", c.code)
 
 
-@rule("NG104", POST, """⚠️  NG104: Static `<img src>` without NgOptimizedImage.
-   💡 Fix: Import NgOptimizedImage and use `ngSrc` with explicit width/height (or `fill`):
-     <img ngSrc="/assets/hero.png" width="800" height="600" alt="Hero">
-   It adds lazy loading, srcset generation, and priority hints, and it prevents layout shift.
-   See: performance-and-zoneless skill""")
+@check("NG104")
 def check_ng104(c):
     # [^>]* spans the newlines Prettier puts inside a long <img> tag but can
     # never cross a `>` into a neighbouring tag.
     return find_all(r"<img[^>]*\ssrc=[\"']", c.code)
 
 
-@rule("NG105", POST, """⚠️  NG105: Direct `document` / `window` access in a component.
-   💡 Fix: Use `viewChild()` signal queries for element access, `afterRenderEffect()` for DOM work that must run post-render, and inject `DOCUMENT` rather than reaching for the global. Direct globals break SSR, where neither exists.
-   See: component-architecture skill""")
+@check("NG105")
 def check_ng105(c):
     if not c.ts or c.spec or not c.component:
         return []
@@ -603,7 +536,7 @@ def quality_findings(src, basename):
     return findings
 
 
-@rule("NG106", POST, "⚠️  NG106: Component complexity.")
+@check("NG106")
 def check_ng106(c):
     if not c.ts or c.spec or not c.component:
         return []
@@ -612,11 +545,11 @@ def check_ng106(c):
 
 # ------------------------------------------------------------------- driver
 
-def message_for(rule_id, message, c):
-    if rule_id == "NG106":
-        details = "\n".join(quality_findings(c.raw, os.path.basename(c.file_path)))
-        return "%s\n   %s\n   See: component-architecture skill" % (message, details)
-    return message
+def message_for(r, c):
+    extra = None
+    if r["id"] == "NG106":
+        extra = quality_findings(c.raw, os.path.basename(c.file_path))
+    return rules.message(r, extra=extra)
 
 
 def run_rule(rule_id, fn, c):
@@ -661,8 +594,6 @@ def lint(mode, payload):
         return []
     if file_path.rsplit(".", 1)[-1].lower() not in ("ts", "html"):
         return []
-    sys.path.insert(0, SCRIPTS)
-    import ag_profile
     _, profile = ag_profile.ensure(os.path.dirname(os.path.abspath(file_path)))
     if not profile:
         return []
@@ -674,16 +605,18 @@ def lint(mode, payload):
     disabled = ag_profile.disabled_rules()
 
     findings = []
-    for rule_id, rule_mode, fn, message in RULES:
-        if rule_mode != mode or rule_id in disabled:
+    for r in rules.RULES:
+        rule_id = r["id"]
+        if r["hook"] != mode or rule_id in disabled or not rules.gate_open(r["gate"], profile):
             continue
+        fn = CHECKS[rule_id]
         hits = run_rule(rule_id, fn, after_ctx)
         if not hits:
             continue
         had = len(run_rule(rule_id, fn, before_ctx)) if before_ctx else 0
         if len(hits) <= had:
             continue
-        text = message_for(rule_id, message, after_ctx)
+        text = message_for(r, after_ctx)
         if had:
             text += ("\n   ℹ️  This file already had %d of these; this change adds %d. "
                      "Only the new ones block." % (had, len(hits) - had))

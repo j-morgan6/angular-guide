@@ -1000,37 +1000,41 @@ for p in skills:
 PY
 check S1-skill-shape "every SKILL.md has valid frontmatter, ordered keys, and a RULES section" "$S1_OK"
 
+# One registry (scripts/rules.py) is the source for every rule's ID, gate and
+# text. Skills may only cite IDs it defines.
 S2_OK=0
-python3 - "$ROOT" <<'PY' 2>/dev/null || S2_OK=1
+python3 -I - "$ROOT" <<'PY' 2>/dev/null || S2_OK=1
 import os, re, sys, glob
 root = sys.argv[1]
-lint = open(os.path.join(root, "scripts", "lint.py"), encoding="utf-8").read()
-defined = set(re.findall(r"def check_(ng\d{3})\s*\(", lint))
-defined = {d.upper() for d in defined}
-guard = open(os.path.join(root, "scripts", "bash-guard.sh"), encoding="utf-8").read()
-defined |= set(re.findall(r"\b(BG\d{3})\b", guard))
+sys.path.insert(0, os.path.join(root, "scripts"))
+import rules
+defined = {r["id"] for r in rules.RULES}
 referenced = set()
 for p in glob.glob(os.path.join(root, "skills", "*", "SKILL.md")):
     referenced |= set(re.findall(r"\b((?:NG|BG)\d{3})\b", open(p, encoding="utf-8").read()))
-sub = open(os.path.join(root, "scripts", "subagent-rules.sh"), encoding="utf-8").read()
-referenced |= set(re.findall(r"\b((?:NG|BG)\d{3})\b", sub))
 orphans = sorted(referenced - defined)
-assert not orphans, "rule IDs referenced but not implemented: " + ", ".join(orphans)
+assert not orphans, "rule IDs cited by skills but not in rules.py: " + ", ".join(orphans)
 PY
-check S2-no-orphan-rule-ids "every rule ID cited in a skill or subagent-rules exists in a script" "$S2_OK"
+check S2-no-orphan-rule-ids "every rule ID cited in a skill exists in rules.py" "$S2_OK"
 
+# Every registry entry has an implementation and vice versa.
 S3_OK=0
-python3 - "$ROOT" <<'PY' 2>/dev/null || S3_OK=1
+python3 -I - "$ROOT" <<'PY' 2>/dev/null || S3_OK=1
 import os, re, sys
 root = sys.argv[1]
+sys.path.insert(0, os.path.join(root, "scripts"))
+import rules
 lint = open(os.path.join(root, "scripts", "lint.py"), encoding="utf-8").read()
-pre = {d.upper() for d in re.findall(r"def check_(ng0\d{2})\s*\(", lint)}
-sub = open(os.path.join(root, "scripts", "subagent-rules.sh"), encoding="utf-8").read()
-cited = set(re.findall(r"\b(NG0\d{2})\b", sub))
-missing = sorted(pre - cited)
-assert not missing, "blocking rules absent from the subagent rule set: " + ", ".join(missing)
+guard = open(os.path.join(root, "scripts", "guard.py"), encoding="utf-8").read()
+checks = set(re.findall(r'@check\("(NG\d{3})"\)', lint))
+guarded = set(re.findall(r'"(BG\d{3})"', guard))
+want_ng = {r["id"] for r in rules.RULES if r["hook"] in ("pre", "post")}
+want_bg = {r["id"] for r in rules.RULES if r["hook"] == "bash"}
+assert checks == want_ng, ("lint.py vs rules.py", sorted(checks ^ want_ng))
+assert guarded == want_bg, ("guard.py vs rules.py", sorted(guarded ^ want_bg))
+assert len(rules.RULES) == 30, len(rules.RULES)
 PY
-check S3-subagent-covers-blocking "every blocking NG0xx rule appears in subagent-rules.sh" "$S3_OK"
+check S3-registry-matches-implementations "rules.py entries == lint.py checks + guard.py rules (30)" "$S3_OK"
 
 ###############################################################################
 echo
@@ -1043,20 +1047,12 @@ for f in README.md CLAUDE.md.template CHANGELOG.md; do
 done
 check R1-docs-exist "README, CLAUDE.md.template, CHANGELOG are present and non-empty" "$R1_OK"
 
+# README rule tables and CLAUDE.md.template rule lists are generated from
+# rules.py; --check fails if either is stale.
 R2_OK=0
-python3 - "$ROOT" <<'PY' 2>/dev/null || R2_OK=1
-import os, re, sys
-root = sys.argv[1]
-lint = open(os.path.join(root, "scripts", "lint.py"), encoding="utf-8").read()
-guard = open(os.path.join(root, "scripts", "bash-guard.sh"), encoding="utf-8").read()
-implemented = {d.upper() for d in re.findall(r"def check_(ng\d{3})\s*\(", lint)}
-implemented |= set(re.findall(r"\b(BG\d{3})\b", guard))
-readme = open(os.path.join(root, "README.md"), encoding="utf-8").read()
-documented = set(re.findall(r"\b((?:NG|BG)\d{3})\b", readme))
-missing = sorted(implemented - documented)
-assert not missing, "rules implemented but undocumented in README: " + ", ".join(missing)
-PY
-check R2-readme-documents-every-rule "every implemented rule ID appears in the README" "$R2_OK"
+run "" python3 -I "$ROOT/tools/gen_docs.py" --check
+[ "$CODE" = "0" ] || R2_OK=1
+check R2-generated-docs-current "tools/gen_docs.py --check: README and CLAUDE.md.template match rules.py" "$R2_OK"
 
 R3_OK=0
 python3 - "$ROOT" <<'PY' 2>/dev/null || R3_OK=1
@@ -1841,6 +1837,36 @@ o = json.load(open(sys.argv[1]))["userConfig"]["disabled_rules"]
 assert o["type"] == "string" and o["title"] and o["description"]
 ' "$ROOT/.claude-plugin/plugin.json" 2>/dev/null || OFF6_OK=1
 check OFF-userconfig-declared "plugin.json declares userConfig.disabled_rules" "$OFF6_OK"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== 3a: rule text comes from one registry =="
+###############################################################################
+
+# With every gate open (v22, zoneless, vitest), subagents get every blocking rule.
+GEN1_OK=0
+SA_ALL=$(sa_context "$VT")
+for id in $(python3 -I -c '
+import sys; sys.path.insert(0, sys.argv[1]); import rules
+print(" ".join(r["id"] for r in rules.RULES if r["hook"] == "pre"))' "$ROOT/scripts"); do
+  printf '%s' "$SA_ALL" | grep -qF "$id" || GEN1_OK=1
+done
+check GEN-subagent-covers-every-blocking-rule "all-gates-open subagent context lists every pre rule in rules.py" "$GEN1_OK"
+
+# --check is load-bearing: a hand edit to a generated table fails it.
+GENROOT="$TMPROOT/gen"; mkdir -p "$GENROOT"
+cp "$ROOT/README.md" "$ROOT/CLAUDE.md.template" "$GENROOT/"
+python3 -I -c '
+import sys
+p = sys.argv[1] + "/README.md"; s = open(p).read()
+open(p, "w").write(s.replace("| NG001 |", "| NG001 | hand-edited |", 1))' "$GENROOT"
+run "" python3 -I "$ROOT/tools/gen_docs.py" --check --root "$GENROOT"
+expect GEN-check-detects-stale-readme 1 out "stale generated docs: README.md"
+run "" python3 -I "$ROOT/tools/gen_docs.py" --root "$GENROOT"
+run "" python3 -I "$ROOT/tools/gen_docs.py" --check --root "$GENROOT"
+expect GEN-regenerate-fixes-it 0 none ""
 
 cd "$ROOT" || exit 1
 

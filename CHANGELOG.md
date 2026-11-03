@@ -61,6 +61,10 @@ All notable changes to `angular-guide` are documented in this file.
   into one Python module, `scripts/lint.py`. A pre-write check takes about 30 ms
   instead of about 200 ms. NG103 now also matches `@Injectable({ ... })` split across
   lines.
+- **Every rule's wording and gate now lives in `scripts/rules.py`.** Hook messages, the
+  subagent rules, the README rule tables, and the `CLAUDE.md.template` rule list are all
+  rendered from it (`tools/gen_docs.py`; the tests fail on stale docs). The Bash rules
+  moved from inline Python in `bash-guard.sh` to `scripts/guard.py`.
 - The plugin version is read from `VERSION` rather than a copy in `detect_project.sh`.
 
 - `data-loading` shows the call-site pattern for HTTP commands

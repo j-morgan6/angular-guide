@@ -80,10 +80,10 @@ that election — which is exactly the gap the hooks in this plugin exist to bac
 
 ## The 30 rules
 
-Every implemented rule ID below is kept in sync with this table by the test suite
-(`R2-readme-documents-every-rule` in `tests/run-tests.sh`): it parses `check_ngNNN()`
-function names out of `scripts/lint.py` and `BGNNN` identifiers out of
-`scripts/bash-guard.sh`, and fails the build if any of them is missing from this file.
+Every rule's ID, gate, and wording lives in one place, `scripts/rules.py`. The tables
+below, the rule list in `CLAUDE.md.template`, the hook messages, and the rules given to
+subagents are all rendered from it. After changing a rule, run
+`python3 tools/gen_docs.py`; the test suite fails if the generated docs are stale.
 
 ### BG001–BG006 — Bash guard (`PreToolUse` on `Bash`)
 
@@ -95,14 +95,16 @@ quoted text stays a single argument, wrappers (`sudo`, `env`, `time`, `npx`/`bun
 turn. So `echo 'rm -rf yarn.lock'` or a commit message that mentions `ng build --prod`
 never matches, and a `--force` belonging to one command is never credited to another.
 
+<!-- generated:rules-bash -->
 | ID | Catches | Fix |
 |---|---|---|
 | BG001 | A force push (`--force`, `-f`, a combined short flag like `-fu`, or a `+ref` refspec) whose destination is `main`/`master`. The *destination* side of a `src:dst` refspec decides (so `main:feature/x` is not flagged); `refs/heads/main` counts as `main`; `HEAD`, or no refspec at all, means the checked-out branch (`git symbolic-ref --short -q HEAD`, honouring `git -C <dir>`). | Use `--force-with-lease`, and push to a feature branch instead. |
-| BG002 | `ng build --prod` | Run `ng build` — production is the default configuration. The flag was removed in Angular 12. |
-| BG003 | A package-manager `install`/`i`/`add`/`ci` with a manager other than the one the workspace's lockfile implies (the profile's `package_manager`). | Use the manager the lockfile names — mixing managers produces a second lockfile and a divergent dependency tree. |
-| BG004 | `ng test` without a flag that prevents watch mode (`--watch=false`, `--watch false`, `--no-watch`, `--run`, or `--ci`) — and `npm test`, `npm run test`, `pnpm test` or `yarn test` when the workspace's `test` script runs `ng test` without one and none is passed through. | Add `--watch=false` (Karma) or `--run` (Vitest); through a package manager, `npm test -- --watch=false`. Otherwise the command hangs the agent session indefinitely. |
-| BG005 | `rm` with a lockfile (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `bun.lockb`) among its arguments. | Delete `node_modules` alone and reinstall; only remove the lockfile when deliberately re-resolving the whole dependency tree. |
-| BG006 | `ng update --force` | Resolve the reported incompatibilities, or update one package at a time — `--force` bypasses the peer-dependency and migration checks that make updating safe. |
+| BG002 | `ng build --prod` | Run `ng build`. Production is the default configuration. |
+| BG003 | A package-manager `install`/`i`/`add`/`ci` with a manager other than the one the workspace's lockfile implies (the profile's `package_manager`). | Use the manager the lockfile names — mixing package managers produces a second lockfile and divergent dependency trees. |
+| BG004 | `ng test` without a flag that prevents watch mode (`--watch=false`, `--watch false`, `--no-watch`, `--run`, or `--ci`) — and `npm test`, `npm run test`, `pnpm test` or `yarn test` when the workspace's `test` script runs `ng test` without one and none is passed through. | Run `ng test --watch=false` (Karma) or `ng test --run` (Vitest); through a package manager, pass it on: `npm test -- --watch=false`. |
+| BG005 | `rm` with a lockfile (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `bun.lockb`) among its arguments. | Delete `node_modules` alone and reinstall. Only remove the lockfile when deliberately re-resolving the whole dependency tree. |
+| BG006 | `ng update --force` | Resolve the reported incompatibilities, or update one package at a time. Run `ng update` without `--force` first to see what it objects to. |
+<!-- /generated:rules-bash -->
 
 Commands built at runtime — `$(...)`, backticks, `eval`, variables holding a command —
 are not expanded, so a rule inside one is not seen.
@@ -117,43 +119,48 @@ into existing context is caught before it's written, but an unrelated edit to a 
 already breaks a rule goes through, and adding another instance to such a file is
 blocked with a note saying how many were already there. A finding exits 2 and blocks the
 write. Only `.ts` and `.html` files are considered; comments (`//`, `/* */`, `<!-- -->`,
-including inside template-literal backticks) are stripped before matching. The rules live
-in `scripts/lint.py`, one `check_ngNNN()` function each.
+including inside template-literal backticks) are stripped before matching. The matchers
+live in `scripts/lint.py`, one `check_ngNNN()` function each; their wording and gates are
+in `scripts/rules.py`.
 
+<!-- generated:rules-pre -->
 | ID | Catches | Fix | Gate |
 |---|---|---|---|
-| NG001 | `standalone: true` in a decorator | Delete the property — standalone is the default since v20. | v20+ |
-| NG002 | `@NgModule` | Use standalone components; put shared providers in `providers` at bootstrap or on a route. | v20+ |
-| NG003 | `*ngIf` / `*ngFor` / `*ngSwitch` / `[ngSwitch]` | Use `@if` / `@for (... ; track ...)` / `@switch`. | v20+ |
-| NG004 | Constructor-parameter DI (`constructor(private x: T)`) — **only inside a file that already carries an Angular class decorator** (`@Component`, `@Directive`, `@Injectable`, `@Service`, `@Pipe`, or `@NgModule`); a plain value class like `Money` with a `constructor(private amount: number)` is not flagged. | Use `inject()` at field level: `private readonly http = inject(HttpClient);` | v20+ |
-| NG005 | `@Input()` / `@Output()` decorators | Use `input()` / `input.required()`, `output()`, `model()`. | v20+ |
-| NG006 | Explicit `changeDetection: ChangeDetectionStrategy.OnPush` | Delete the property and its import — OnPush is the default in v22. | v22+ |
-| NG007 | `any` (as a type annotation, `as any`, or `<any>`) | Use `unknown` and narrow it, or the real type. | none |
-| NG008 | `[ngClass]` / `[ngStyle]` (attribute or property-binding form) | Use `[class.x]`, `[style.x.unit]`, or `[class]="record()"`. | none |
-| NG009 | `@HostBinding` / `@HostListener` decorators | Use the `host` object in `@Component`/`@Directive` metadata. | none |
-| NG010 | `.subscribe()` whose call chain (walked back at bracket depth 0 to the previous `;`, `,`, `=>`, or unmatched opener, so arrow functions inside earlier operators don't cut it short) contains none of `takeUntilDestroyed`, `takeUntil(`, `take(`, `first(`, `firstValueFrom`, `lastValueFrom` — matched as plain substrings, and skipped entirely in `.spec.ts`/`.test.ts` files. | Prefer not subscribing — `async` pipe, `toSignal()`, `httpResource()`. For a one-shot HTTP command, `await firstValueFrom(...)`. Otherwise add `.pipe(takeUntilDestroyed(this.destroyRef))`. | none |
-| NG011 | `.mutate(` on a signal | Use `.set()` with a new value or `.update()` with a pure transform — the API was removed. | none |
-| NG012 | `effect(...)` whose body (balanced-paren extracted, so it correctly spans nested calls) contains a one-argument `.set(` or `.update(` outside an `untracked(...)` callback — a two-argument `.set(k, v)` is a `Map`/`HttpParams`/`URLSearchParams`, not a signal | Move derived state to `computed()`; state derived from other signals but independently writable to `linkedSignal()`. | none |
-| NG013 | `@for (...)` whose balanced-paren clause contains no `track` — the clause is extracted by counting parens, not by matching to the first `)`, so `@for (x of items(); track x.id)` is correctly **not** flagged despite the inner `items()` call. | Add `track item.id` (or another stable identity). | v20+ |
-| NG014 | `[innerHTML]` / `[outerHTML]` bindings | Interpolate text or compose real components; sanitize server-side if you must render markup. | none |
-| NG015 | Any `bypassSecurityTrust*` call | Sanitize upstream; if a trusted-value case is genuine, isolate it in one reviewed helper. | none |
-| NG016 | In a file under an `environments?/` directory or named `environment*.ts`, a string literal assigned to a key whose last word is `password`/`secret`/`credential` (any non-empty value), or `key`/`token` (only a value that looks issued: a known secret prefix like `sk_live_`/`ghp_`/`AKIA`, or 20+ high-entropy characters). URLs, lines that read `process.env`/`import.meta.env`, and browser keys that are public by design (`AIza…`, Stripe `pk_…`) are skipped — so `storageKey: "app-theme"` passes. | Move the secret behind your backend; `environment.ts` compiles into the public browser bundle regardless of when the value was injected. | none |
-| NG017 | An `import`/`require` of `zone.js` | Remove it — this workspace runs `provideZonelessChangeDetection()`, and zone.js re-introduces monkey-patched async APIs. | only when the cached profile says `zoneless: true` |
-| NG018 | A `jasmine.*` reference in a `.ts` file | Use Vitest equivalents (`vi.fn()`, `vi.spyOn()`, `expect.objectContaining()`) — TestBed itself is unchanged. | only when the cached profile says `test_runner: "vitest"` |
+| NG001 | `standalone: true` in a decorator | Delete the property. Standalone is the default since Angular v20 — writing it is redundant and signals a pre-v20 mental model. | v20+ |
+| NG002 | `@NgModule` | Use standalone components. Put shared providers in `providers` at bootstrap or on a route, and import components directly via the `imports` array. | v20+ |
+| NG003 | `*ngIf` / `*ngFor` / `*ngSwitch` / `[ngSwitch]` | Use native control flow — `@if (cond) { }`, `@for (x of xs; track x.id) { }`, `@switch (v) { @case (a) { } }`. It needs no imports, is faster, and is the only supported form going forward. | v20+ |
+| NG004 | Constructor-parameter DI (`constructor(private x: T)`) — **only inside a file that already carries an Angular class decorator** (`@Component`, `@Directive`, `@Injectable`, `@Service`, `@Pipe`, or `@NgModule`); a plain value class like `Money` with a `constructor(private amount: number)` is not flagged. | Use the `inject()` function at field level: `private readonly http = inject(HttpClient);` | v20+ |
+| NG005 | `@Input()` / `@Output()` decorators | Use the signal-based functions — `input()` / `input.required()`, `output()`, `model()`: | v20+ |
+| NG006 | Explicit `changeDetection: ChangeDetectionStrategy.OnPush` | Delete the property and its import. OnPush is the default strategy in Angular v22 — setting it explicitly is now noise. | v22+ |
+| NG007 | `any` in a `.ts` file (as a type annotation, `as any`, or `<any>`), not the word inside a string | Use `unknown` when the type is genuinely uncertain and narrow it, or give the value its real type. `any` disables every check TypeScript exists to provide. | — |
+| NG008 | `[ngClass]` / `[ngStyle]` (attribute or property-binding form) | Use native bindings — `[class.active]="isActive()"`, `[style.width.px]="w()"`, or `[class]="classRecord()"`. They need no import and avoid an extra directive instance per element. | — |
+| NG009 | `@HostBinding` / `@HostListener` decorators | Use the `host` object in the decorator metadata: `@Component({ host: { "[class.active]": "isActive()", "(click)": "onClick($event)" } })` | — |
+| NG010 | `.subscribe()` whose call chain (walked back at bracket depth 0 to the previous `;`, `,`, `=>`, or unmatched opener, so arrow functions inside earlier operators don't cut it short) contains none of `takeUntilDestroyed`, `takeUntil(`, `take(`, `first(`, `firstValueFrom`, `lastValueFrom` — matched as plain substrings, and skipped entirely in `.spec.ts`/`.test.ts` files. | Prefer not subscribing at all — use the `async` pipe, `toSignal(obs$)`, or `httpResource()`. For a one-shot HTTP command, `await firstValueFrom(...)`. When you must subscribe, add teardown: `obs$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(...)` | — |
+| NG011 | `.mutate(` on a signal | Use `set()` with a new value, or `update()` with a pure transform: `this.items.update((xs) => [...xs, item]);` | — |
+| NG012 | `effect(...)` whose body (balanced-paren extracted, so it correctly spans nested calls) contains a one-argument `.set(` or `.update(` outside an `untracked(...)` callback — a two-argument `.set(k, v)` is a `Map`/`HttpParams`/`URLSearchParams`, not a signal | Derived state belongs in `computed()`; writable state derived from other signals belongs in `linkedSignal()`. Effects are for side effects that leave the reactive graph — logging, third-party DOM, analytics. | — |
+| NG013 | `@for (...)` whose balanced-paren clause contains no `track` — the clause is extracted by counting parens, not by matching to the first `)`, so `@for (x of items(); track x.id)` is correctly **not** flagged despite the inner `items()` call. | Add a stable identity — `@for (item of items(); track item.id) { }`. `track` is mandatory; without it Angular cannot reuse DOM nodes and rebuilds the whole list on every change. | v20+ |
+| NG014 | `[innerHTML]` / `[outerHTML]` bindings | Render text with interpolation, or compose real components. If you must render untrusted markup, sanitize it server-side and render through a vetted component — Angular sanitizes `[innerHTML]` but the pattern still invites XSS as soon as someone reaches for `bypassSecurityTrust*`. | — |
+| NG015 | Any `bypassSecurityTrust*` call | This disables Angular XSS protection for that value. Sanitize upstream and render normally. If a genuine trusted-value case exists, it belongs in one reviewed, narrowly-scoped helper — never inline in a component. | — |
+| NG016 | In a file under an `environments?/` directory or named `environment*.ts`, a string literal assigned to a key whose last word is `password`/`secret`/`credential` (any non-empty value), or `key`/`token` (only a value that looks issued: a known secret prefix like `sk_live_`/`ghp_`/`AKIA`, or 20+ high-entropy characters). URLs, lines that read `process.env`/`import.meta.env`, and browser keys that are public by design (`AIza…`, Stripe `pk_…`) are skipped — so `storageKey: "app-theme"` passes. | `environment.ts` is compiled into the browser bundle — anything in it is public. Move the secret behind your backend and have the client call your API. Build-time injection does not help; the value still ships. | — |
+| NG017 | An `import`/`require` of `zone.js` | Remove the import. This app runs with `provideZonelessChangeDetection()`; loading zone.js re-introduces monkey-patching of every async API and negates the benefit. | zoneless workspaces |
+| NG018 | A `jasmine.*` reference in a `.ts` file | Use the Vitest equivalents — `vi.fn()` for `jasmine.createSpy()`, `vi.spyOn()` for `spyOn()`, `expect.objectContaining()` for `jasmine.objectContaining()`. TestBed itself is unchanged. | Vitest workspaces |
+<!-- /generated:rules-pre -->
 
 ### NG101–NG106 — advisory checks (`PostToolUse` on `Write`/`Edit`, `hook-lint.sh post`)
 
 Run against the file **already written to disk**. A finding exits 2 and is shown to the
 model, but the write already happened — nothing is undone.
 
+<!-- generated:rules-post -->
 | ID | Catches | Fix | Gate |
 |---|---|---|---|
-| NG101 | A route object in a file whose path matches `routes?.ts`/`.routes.ts`/contains `routing`, with an eager `component: SomeComponent` reference | Use `loadComponent: () => import(...).then((m) => m.SomeComponent)` to keep the feature out of the initial bundle. | none |
-| NG102 | `FormBuilder` / `new FormGroup` / `fb.group(` in a non-spec `.ts` file | Prefer Signal Forms for a *new* form — form state is signals and composes with `computed()` with no `valueChanges` subscription. (Extending an existing Reactive Forms screen is fine; starting a new one isn't.) | only when the cached profile says `signal_forms_available: true` (v22+) |
-| NG103 | `@Injectable({ providedIn: 'root' })` | Use `@Service()` — same root-provided singleton, less ceremony. | only when the cached profile says `service_decorator_available: true` (v22+) |
-| NG104 | A static `<img ... src="...">` with no `NgOptimizedImage` — matched against a **newline-flattened copy of the file**, specifically so a `<img>` tag that Prettier has wrapped across multiple lines is still caught. | Import `NgOptimizedImage` and use `ngSrc` with explicit `width`/`height` (or `fill`). | none |
-| NG105 | Direct `document.`/`window.` access (the globals — `this.document` from `inject(DOCUMENT)` is not flagged) in a file that is a component — the path ends `.component.ts`, **or** its (comment-stripped) content contains `@Component` — skipped entirely in `.spec.ts`/`.test.ts` files. | Use `viewChild()` for elements, `afterRenderEffect()` for post-render DOM work, or inject `DOCUMENT` rather than the global. Direct globals break under SSR. | none |
-| NG106 | Structural complexity in a component file (same `.component.ts`-or-`@Component` test as NG105, run by the standalone `analyze_quality.sh`): an `HttpClient` reference, more than ~200 non-blank lines, or more than ~8 `input()`/`input.required()` declarations — skipped entirely in `.spec.ts`/`.test.ts` files. | Move HTTP into a service; split the component; collapse many scalar inputs into one object input. | none |
+| NG101 | A route object in a file whose path matches `routes?.ts`/`.routes.ts`/contains `routing`, with an eager `component: SomeComponent` reference | Lazy-load it so the feature leaves the initial bundle: `{ path: "admin", loadComponent: () => import("./admin/admin-page").then((m) => m.AdminPage) }` | — |
+| NG102 | `FormBuilder` / `new FormGroup` / `fb.group(` in a non-spec `.ts` file | Prefer Signal Forms for new forms — form state is signals, so it composes with `computed()` and needs no `valueChanges` subscription. Staying on Reactive Forms is correct when extending an existing Reactive Forms screen; starting a new one there is not. | v22+ |
+| NG103 | `@Injectable({ providedIn: 'root' })`, including when the object spans several lines | Use the `@Service()` decorator — it is the same root-provided singleton with less ceremony. | v22+ |
+| NG104 | A static `<img ... src="...">` with no `NgOptimizedImage`, including a tag Prettier has wrapped across lines. | Import `NgOptimizedImage` and use `ngSrc` with explicit `width`/`height` (or `fill`): `<img ngSrc="/assets/hero.png" width="800" height="600" alt="Hero">` | — |
+| NG105 | Direct `document.`/`window.` access (the globals — `this.document` from `inject(DOCUMENT)` is not flagged) in a file that is a component — the path ends `.component.ts`, **or** its (comment-stripped) content contains `@Component` — skipped entirely in `.spec.ts`/`.test.ts` files. | Use `viewChild()` signal queries for element access, `afterRenderEffect()` for DOM work that must run post-render, and inject `DOCUMENT` rather than reaching for the global. Direct globals break SSR, where neither exists. | — |
+| NG106 | Structural complexity in a component file (same `.component.ts`-or-`@Component` test as NG105; also runnable standalone as `analyze_quality.sh`): an `HttpClient` reference, more than ~200 non-blank lines, or more than ~8 `input()`/`input.required()` declarations — skipped entirely in `.spec.ts`/`.test.ts` files. | Move HTTP into a service; split the component; collapse many scalar inputs into one object input. | — |
+<!-- /generated:rules-post -->
 
 ## Version awareness
 
@@ -210,9 +217,10 @@ bash tests/run-tests.sh
 
 The suite is self-contained bash + python3 (no `jq`, no external dependencies) and
 exercises `detect_project.sh`, `hook-lint.sh` (both modes), `bash-guard.sh`,
-`subagent-rules.sh`, the `hooks/hooks.json` wiring, every skill's frontmatter shape, and
-the drift checks described above (`R2`, and its sibling `S2`/`S3` that keep skills and
-`subagent-rules.sh` from citing a rule ID that doesn't exist in a script).
+`subagent-rules.sh`, the `hooks/hooks.json` wiring, and every skill's frontmatter shape.
+Drift checks fail the build if the generated docs are stale (`R2`), if a skill cites a
+rule ID `rules.py` doesn't define (`S2`), or if `rules.py` and the implementations in
+`lint.py`/`guard.py` disagree about which rules exist (`S3`).
 
 ## Tuning
 
