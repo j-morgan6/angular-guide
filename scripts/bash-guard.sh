@@ -6,7 +6,7 @@ set -u
 
 INPUT=$(cat)
 
-CMD=$(printf '%s' "$INPUT" | python3 -c '
+CMD=$(printf '%s' "$INPUT" | python3 -I -c '
 import json, sys
 try:
     d = json.loads(sys.stdin.read())

@@ -39,7 +39,7 @@ case "$MODE" in pre|post) ;; *) exit 0 ;; esac
 # the content is ever created.)
 META_TMP=$(mktemp "${TMPDIR:-/tmp}/angular-guide-meta.XXXXXX" 2>/dev/null) || exit 0
 
-printf '%s' "$INPUT" | python3 -c '
+printf '%s' "$INPUT" | python3 -I -c '
 import json, sys, os, tempfile
 
 mode = sys.argv[1]
@@ -195,7 +195,7 @@ gate_v22() { gate onpush_default; }
 CODE_TMP=$(mktemp "${TMPDIR:-/tmp}/angular-guide-code.XXXXXX" 2>/dev/null) || CODE_TMP=""
 if [ -n "$CODE_TMP" ]; then
   CODE_PATH="$CODE_TMP"
-  python3 -c '
+  python3 -I -c '
 import sys
 
 def scan_delimited(src, i, opener_len, end_marker, out):
@@ -432,7 +432,7 @@ check_ng007() {
   # content before matching, rather than writing an unrelated second
   # scanner. Same fail-open contract as NG010/NG012/NG013: read the exit
   # code directly, do not gate with `|| return 0`.
-  python3 - "$CODE_PATH" <<'PY' 2>/dev/null
+  python3 -I - "$CODE_PATH" <<'PY' 2>/dev/null
 import re, sys
 try:
     src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
@@ -488,7 +488,7 @@ check_ng010() {
   # errored" (fail-open). Do NOT gate this invocation with `|| return 0` --
   # sys.exit(1) is a real, expected exit code here (the violation signal),
   # and `||` would treat it identically to a crash and swallow every finding.
-  python3 - "$CODE_PATH" <<'PY' 2>/dev/null
+  python3 -I - "$CODE_PATH" <<'PY' 2>/dev/null
 import re, sys
 def chain_start(s, end):
     # Walk back from the `.subscribe` at `end` to the start of its call
@@ -553,7 +553,7 @@ check_ng012() {
   # Same fail-open contract as NG010: the python pass exits 1 only for a
   # deliberately detected violation, 0 for clean or an internal error, and
   # the shell must read that exit code directly rather than via `|| return 0`.
-  python3 - "$CODE_PATH" <<'PY' 2>/dev/null
+  python3 -I - "$CODE_PATH" <<'PY' 2>/dev/null
 import re, sys
 
 def balanced_span(s, open_paren_index):
@@ -657,7 +657,7 @@ check_ng013() {
   # x.id)` form calls a signal, so `[^)]*` would stop at the `)` that closes
   # `xs()` and never see `track` at all -- a false NG013 on the very pattern
   # this plugin exists to encourage.
-  python3 - "$CODE_PATH" <<'PY' 2>/dev/null
+  python3 -I - "$CODE_PATH" <<'PY' 2>/dev/null
 import re, sys
 try:
     src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
@@ -727,7 +727,7 @@ check_ng016() {
   #     that looks issued: a known secret prefix, or a long, high-entropy
   #     string -- so `storageKey: "app-theme"` passes. Browser keys that are
   #     public by design (Firebase/Google `AIza...`, Stripe `pk_...`) pass.
-  python3 - "$CODE_PATH" <<'PY' 2>/dev/null
+  python3 -I - "$CODE_PATH" <<'PY' 2>/dev/null
 import math, re, sys
 from collections import Counter
 

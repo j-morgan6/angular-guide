@@ -61,13 +61,13 @@ expect() { # <name> <expected-exit> <stream:err|out|none> <substring-or-empty>
 
 # JSON helpers — build the tool-input payloads Claude Code sends to hooks
 write_json() { # file_path content
-  python3 -c 'import json,sys; print(json.dumps({"tool_name":"Write","tool_input":{"file_path":sys.argv[1],"content":sys.argv[2]}}))' "$1" "$2"
+  python3 -I -c 'import json,sys; print(json.dumps({"tool_name":"Write","tool_input":{"file_path":sys.argv[1],"content":sys.argv[2]}}))' "$1" "$2"
 }
 edit_json() { # file_path old new
-  python3 -c 'import json,sys; print(json.dumps({"tool_name":"Edit","tool_input":{"file_path":sys.argv[1],"old_string":sys.argv[2],"new_string":sys.argv[3]}}))' "$1" "$2" "$3"
+  python3 -I -c 'import json,sys; print(json.dumps({"tool_name":"Edit","tool_input":{"file_path":sys.argv[1],"old_string":sys.argv[2],"new_string":sys.argv[3]}}))' "$1" "$2" "$3"
 }
 bash_json() { # command
-  python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$1"
+  python3 -I -c 'import json,sys; print(json.dumps({"tool_name":"Bash","tool_input":{"command":sys.argv[1]}}))' "$1"
 }
 
 # ng_workspace <dir> <angular-version> [extra-devdeps-json]
@@ -1390,6 +1390,31 @@ C1_OK=0
 [ "$(cat "$C1_DIR/decoy.ts" 2>/dev/null)" = "decoy-content" ] || C1_OK=1
 check C1-newline-filepath-no-deletion "newline-bearing file_path: exit 0, decoy file in cwd survives" "$C1_OK"
 
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== PY-I: hooks never import modules from the user's project directory =="
+###############################################################################
+
+# `python3 -` and `python3 -c` put the cwd on sys.path, so a repository with
+# a json.py or re.py would have it executed by every hook -- SessionStart
+# included -- just by opening a session there. Every interpreter must run
+# isolated (-I). Each planted module writes a marker if it is ever imported.
+PYI="$TMPROOT/pyi"; ng_workspace "$PYI" "22.0.0"; mkdir -p "$PYI/src/app"
+for mod in json re os sys math tempfile collections shlex hashlib datetime; do
+  printf 'open(%s, "a").write("%s\\n")\n' "'$PYI/PWNED'" "$mod" > "$PYI/$mod.py"
+done
+cd "$PYI" || exit 1
+bash "$DETECT" >/dev/null 2>&1
+run "$(write_json "$PYI/src/app/a.ts" 'const x: any = 1;')" bash "$HOOK_LINT" pre
+printf 'x' > "$PYI/src/app/b.component.ts"
+run "$(write_json "$PYI/src/app/b.component.ts" 'x')" bash "$HOOK_LINT" post
+run "$(bash_json 'ng build --prod')" bash "$BASH_GUARD"
+run '{"hook_event_name":"SubagentStart"}' bash "$SUBAGENT"
+PYI_OK=0
+[ ! -f "$PYI/PWNED" ] || PYI_OK=1
+check PY-I-isolated-interpreters "no planted module in the project dir is imported by any hook ($(tr '\n' ' ' < "$PYI/PWNED" 2>/dev/null))" "$PYI_OK"
 cd "$ROOT" || exit 1
 
 ###############################################################################

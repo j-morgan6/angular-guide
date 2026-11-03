@@ -35,7 +35,7 @@ find_workspace_root_down() {
   [ -n "$out" ] || return 1
   count=$(printf '%s\n' "$out" | grep -c .)
   [ "$count" -le 200 ] || return 1
-  printf '%s\n' "$out" | python3 -c '
+  printf '%s\n' "$out" | python3 -I -c '
 import sys, os
 paths = [l.rstrip("\n") for l in sys.stdin if l.strip()]
 if not paths:
@@ -55,7 +55,7 @@ ROOT=$(find_workspace_root 2>/dev/null) || ROOT=$(find_workspace_root_down 2>/de
 
 CACHE="$ROOT/.angular-guide-project.json"
 
-python3 - "$ROOT" "$CACHE" "$PLUGIN_VERSION" <<'PY' 2>/dev/null || exit 0
+python3 -I - "$ROOT" "$CACHE" "$PLUGIN_VERSION" <<'PY' 2>/dev/null || exit 0
 import json, os, re, sys, datetime
 
 root, cache, plugin_version = sys.argv[1], sys.argv[2], sys.argv[3]

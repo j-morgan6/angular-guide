@@ -7,7 +7,7 @@ set -u
 FILE="${1:-}"
 [ -n "$FILE" ] && [ -r "$FILE" ] || exit 0
 
-python3 - "$FILE" <<'PY' 2>/dev/null
+python3 -I - "$FILE" <<'PY' 2>/dev/null
 import re, sys, os
 
 path = sys.argv[1]

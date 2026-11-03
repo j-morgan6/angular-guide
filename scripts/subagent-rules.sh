@@ -13,7 +13,7 @@ set -u
 
 INPUT=$(cat)
 
-python3 - "$INPUT" <<'PY' 2>/dev/null
+python3 -I - "$INPUT" <<'PY' 2>/dev/null
 import json, os, sys
 
 try:
