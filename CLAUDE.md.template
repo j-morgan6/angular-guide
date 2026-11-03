@@ -79,14 +79,3 @@ For anything outside this plugin's scope — API reference, migration guidance, 
 Angular authorship — use Angular's own tooling: the `angular/angular` agent skill
 (`skills/dev-skills/angular-developer/`), the CLI MCP server (`npx @angular/cli mcp`),
 and `angular.dev/llms.txt`.
-
-## Required: gitignore the version-detection cache
-
-`angular-guide` writes `.angular-guide-project.json` at your workspace root on session
-start. **It is a machine-local cache, not a config file** — it's regenerated every
-session from `package.json`/lockfile contents and must never be committed. Add this to
-your `.gitignore` if it isn't there already:
-
-```
-.angular-guide-project.json
-```

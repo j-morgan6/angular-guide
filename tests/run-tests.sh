@@ -89,6 +89,11 @@ json.dump({"name":"fixture","dependencies":{"@angular/core":"^"+sys.argv[2]},"de
 TMPROOT=$(mktemp -d)
 trap 'rm -rf "$TMPROOT"' EXIT
 
+# Profiles live in the plugin's data dir (CLAUDE_PLUGIN_DATA), never in the
+# workspace. profile_of <workspace-root> prints where a root's profile goes.
+export CLAUDE_PLUGIN_DATA="$TMPROOT/plugin-data"
+profile_of() { python3 -I "$ROOT/scripts/ag_profile.py" path "$1"; }
+
 ###############################################################################
 echo "== manifests =="
 ###############################################################################
@@ -128,29 +133,29 @@ echo "== detect_project.sh =="
 WORK="$TMPROOT/d1"; ng_workspace "$WORK" "22.0.1"; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D1_OK=0
-grep -q '"angular_major": 22' .angular-guide-project.json 2>/dev/null || D1_OK=1
-grep -q '"onpush_default": true' .angular-guide-project.json 2>/dev/null || D1_OK=1
-grep -q '"signal_forms_available": true' .angular-guide-project.json 2>/dev/null || D1_OK=1
-grep -q '"service_decorator_available": true' .angular-guide-project.json 2>/dev/null || D1_OK=1
-grep -q '"standalone_default": true' .angular-guide-project.json 2>/dev/null || D1_OK=1
+grep -q '"angular_major": 22' "$(profile_of "$WORK")" 2>/dev/null || D1_OK=1
+grep -q '"onpush_default": true' "$(profile_of "$WORK")" 2>/dev/null || D1_OK=1
+grep -q '"signal_forms_available": true' "$(profile_of "$WORK")" 2>/dev/null || D1_OK=1
+grep -q '"service_decorator_available": true' "$(profile_of "$WORK")" 2>/dev/null || D1_OK=1
+grep -q '"standalone_default": true' "$(profile_of "$WORK")" 2>/dev/null || D1_OK=1
 check D1-v22-gates "v22 workspace sets all v22 gates true" "$D1_OK"
 
 # D2: v21 workspace — onpush/signal-forms/@Service OFF, standalone ON
 WORK="$TMPROOT/d2"; ng_workspace "$WORK" "21.2.0"; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D2_OK=0
-grep -q '"angular_major": 21' .angular-guide-project.json 2>/dev/null || D2_OK=1
-grep -q '"onpush_default": false' .angular-guide-project.json 2>/dev/null || D2_OK=1
-grep -q '"signal_forms_available": false' .angular-guide-project.json 2>/dev/null || D2_OK=1
-grep -q '"standalone_default": true' .angular-guide-project.json 2>/dev/null || D2_OK=1
+grep -q '"angular_major": 21' "$(profile_of "$WORK")" 2>/dev/null || D2_OK=1
+grep -q '"onpush_default": false' "$(profile_of "$WORK")" 2>/dev/null || D2_OK=1
+grep -q '"signal_forms_available": false' "$(profile_of "$WORK")" 2>/dev/null || D2_OK=1
+grep -q '"standalone_default": true' "$(profile_of "$WORK")" 2>/dev/null || D2_OK=1
 check D2-v21-gates "v21 leaves v22-only gates false, standalone true" "$D2_OK"
 
 # D3: v20 workspace
 WORK="$TMPROOT/d3"; ng_workspace "$WORK" "20.0.0"; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D3_OK=0
-grep -q '"angular_major": 20' .angular-guide-project.json 2>/dev/null || D3_OK=1
-grep -q '"standalone_default": true' .angular-guide-project.json 2>/dev/null || D3_OK=1
+grep -q '"angular_major": 20' "$(profile_of "$WORK")" 2>/dev/null || D3_OK=1
+grep -q '"standalone_default": true' "$(profile_of "$WORK")" 2>/dev/null || D3_OK=1
 check D3-v20-gates "v20 sets standalone_default true" "$D3_OK"
 
 # D4: not an Angular workspace — exit 0, no cache, no output
@@ -158,33 +163,34 @@ WORK="$TMPROOT/d4"; mkdir -p "$WORK"; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D4_OK=0
 [ "$CODE" = "0" ] || D4_OK=1
-[ ! -f .angular-guide-project.json ] || D4_OK=1
+[ ! -f "$(profile_of "$WORK")" ] || D4_OK=1
+[ ! -f "$WORK/.angular-guide-project.json" ] || D4_OK=1
 check D4-non-angular-inert "no angular.json → exit 0, no cache written" "$D4_OK"
 
 # D5: zone.js present → zoneless false; absent → zoneless true
 WORK="$TMPROOT/d5"; ng_workspace "$WORK" "22.0.0" '{"zone.js":"~0.15.0"}'; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D5_OK=0
-grep -q '"zoneless": false' .angular-guide-project.json 2>/dev/null || D5_OK=1
+grep -q '"zoneless": false' "$(profile_of "$WORK")" 2>/dev/null || D5_OK=1
 check D5-zonejs-present "zone.js dependency → zoneless false" "$D5_OK"
 
 WORK="$TMPROOT/d5b"; ng_workspace "$WORK" "22.0.0"; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D5B_OK=0
-grep -q '"zoneless": true' .angular-guide-project.json 2>/dev/null || D5B_OK=1
+grep -q '"zoneless": true' "$(profile_of "$WORK")" 2>/dev/null || D5B_OK=1
 check D5b-zonejs-absent "no zone.js → zoneless true" "$D5B_OK"
 
 # D6: test runner detection
 WORK="$TMPROOT/d6"; ng_workspace "$WORK" "22.0.0" '{"vitest":"^3.0.0"}'; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D6_OK=0
-grep -q '"test_runner": "vitest"' .angular-guide-project.json 2>/dev/null || D6_OK=1
+grep -q '"test_runner": "vitest"' "$(profile_of "$WORK")" 2>/dev/null || D6_OK=1
 check D6-vitest "vitest devDependency detected" "$D6_OK"
 
 WORK="$TMPROOT/d6b"; ng_workspace "$WORK" "21.0.0" '{"karma":"~6.4.0"}'; cd "$WORK" || exit 1
 run "" bash "$DETECT"
 D6B_OK=0
-grep -q '"test_runner": "karma"' .angular-guide-project.json 2>/dev/null || D6B_OK=1
+grep -q '"test_runner": "karma"' "$(profile_of "$WORK")" 2>/dev/null || D6B_OK=1
 check D6b-karma "karma devDependency detected" "$D6B_OK"
 
 # D7: unknown version → gates must be false, never guessed
@@ -193,9 +199,9 @@ printf '{"version":1,"projects":{}}\n' > angular.json
 printf '{"name":"x","dependencies":{}}\n' > package.json
 run "" bash "$DETECT"
 D7_OK=0
-grep -q '"angular_major": "unknown"' .angular-guide-project.json 2>/dev/null || D7_OK=1
-grep -q '"onpush_default": false' .angular-guide-project.json 2>/dev/null || D7_OK=1
-grep -q '"standalone_default": false' .angular-guide-project.json 2>/dev/null || D7_OK=1
+grep -q '"angular_major": "unknown"' "$(profile_of "$WORK")" 2>/dev/null || D7_OK=1
+grep -q '"onpush_default": false' "$(profile_of "$WORK")" 2>/dev/null || D7_OK=1
+grep -q '"standalone_default": false' "$(profile_of "$WORK")" 2>/dev/null || D7_OK=1
 check D7-unknown-version "unknown version → every gate false, never guessed" "$D7_OK"
 
 # D8: package manager from lockfile
@@ -203,7 +209,7 @@ WORK="$TMPROOT/d8"; ng_workspace "$WORK" "22.0.0"; cd "$WORK" || exit 1
 touch pnpm-lock.yaml
 run "" bash "$DETECT"
 D8_OK=0
-grep -q '"package_manager": "pnpm"' .angular-guide-project.json 2>/dev/null || D8_OK=1
+grep -q '"package_manager": "pnpm"' "$(profile_of "$WORK")" 2>/dev/null || D8_OK=1
 check D8-pnpm-lockfile "pnpm-lock.yaml → package_manager pnpm" "$D8_OK"
 
 # D9: detection runs from a nested subdirectory and finds the workspace root
@@ -211,8 +217,8 @@ WORK="$TMPROOT/d9"; ng_workspace "$WORK" "22.0.0"
 mkdir -p "$WORK/src/app/feature"; cd "$WORK/src/app/feature" || exit 1
 run "" bash "$DETECT"
 D9_OK=0
-[ -f "$WORK/.angular-guide-project.json" ] || D9_OK=1
-check D9-walks-up "runs from nested dir, writes cache at workspace root" "$D9_OK"
+[ -f "$(profile_of "$WORK")" ] || D9_OK=1
+check D9-walks-up "runs from nested dir, caches the profile for the workspace root" "$D9_OK"
 
 # D10: announces to stdout for session context
 D10_OK=0
@@ -237,8 +243,8 @@ json.dump(
 '
 run "" bash "$DETECT"
 D11_OK=0
-grep -q '"angular_major": 22' .angular-guide-project.json 2>/dev/null || D11_OK=1
-grep -q '"onpush_default": true' .angular-guide-project.json 2>/dev/null || D11_OK=1
+grep -q '"angular_major": 22' "$(profile_of "$WORK")" 2>/dev/null || D11_OK=1
+grep -q '"onpush_default": true' "$(profile_of "$WORK")" 2>/dev/null || D11_OK=1
 check D11-package-lock-fallback "unresolvable package.json range, package-lock.json resolves version" "$D11_OK"
 
 # D12: package.json range unresolvable, yarn.lock resolves the version
@@ -257,8 +263,8 @@ printf '%s\n' \
   > yarn.lock
 run "" bash "$DETECT"
 D12_OK=0
-grep -q '"angular_major": 22' .angular-guide-project.json 2>/dev/null || D12_OK=1
-grep -q '"onpush_default": true' .angular-guide-project.json 2>/dev/null || D12_OK=1
+grep -q '"angular_major": 22' "$(profile_of "$WORK")" 2>/dev/null || D12_OK=1
+grep -q '"onpush_default": true' "$(profile_of "$WORK")" 2>/dev/null || D12_OK=1
 check D12-yarn-lock-fallback "unresolvable package.json range, yarn.lock resolves version" "$D12_OK"
 
 # D13: package.json range unresolvable, pnpm-lock.yaml resolves the version
@@ -273,8 +279,8 @@ json.dump(d, open("package.json", "w"))
 printf "packages:\n  '@angular/core@22.0.1':\n" > pnpm-lock.yaml
 run "" bash "$DETECT"
 D13_OK=0
-grep -q '"angular_major": 22' .angular-guide-project.json 2>/dev/null || D13_OK=1
-grep -q '"onpush_default": true' .angular-guide-project.json 2>/dev/null || D13_OK=1
+grep -q '"angular_major": 22' "$(profile_of "$WORK")" 2>/dev/null || D13_OK=1
+grep -q '"onpush_default": true' "$(profile_of "$WORK")" 2>/dev/null || D13_OK=1
 check D13-pnpm-lock-fallback "unresolvable package.json range, pnpm-lock.yaml resolves version" "$D13_OK"
 
 ###############################################################################
@@ -1068,9 +1074,9 @@ for p in agents:
 PY
 check R3-agents-readonly "3 agents, valid frontmatter, no write tools" "$R3_OK"
 
-R4_OK=0
-grep -q '.angular-guide-project.json' "$ROOT/CLAUDE.md.template" 2>/dev/null || R4_OK=1
-check R4-template-gitignore "CLAUDE.md.template tells users to gitignore the profile cache" "$R4_OK"
+R5_OK=0
+grep -q 'gitignore' "$ROOT/CLAUDE.md.template" 2>/dev/null && R5_OK=1
+check R5-template-no-gitignore-step "CLAUDE.md.template no longer asks users to gitignore a cache" "$R5_OK"
 
 ###############################################################################
 echo
@@ -1185,9 +1191,9 @@ cd "$I5A" || exit 1
 run "" bash "$DETECT"
 I5A_OK=0
 [ "$CODE" = "0" ] || I5A_OK=1
-[ -f "$I5A/apps/web/.angular-guide-project.json" ] || I5A_OK=1
-[ -f "$I5A/.angular-guide-project.json" ] && I5A_OK=1
-grep -q '"angular_major": 22' "$I5A/apps/web/.angular-guide-project.json" 2>/dev/null || I5A_OK=1
+[ -f "$(profile_of "$I5A/apps/web")" ] || I5A_OK=1
+[ -f "$(profile_of "$I5A")" ] && I5A_OK=1
+grep -q '"angular_major": 22' "$(profile_of "$I5A/apps/web")" 2>/dev/null || I5A_OK=1
 check I5-monorepo-downward-search "session at repo root finds the single nested angular.json downward" "$I5A_OK"
 
 # node_modules must be pruned from the downward search -- an angular.json
@@ -1206,8 +1212,8 @@ cd "$I5B" || exit 1
 run "" bash "$DETECT"
 I5B_OK=0
 [ "$CODE" = "0" ] || I5B_OK=1
-[ ! -f "$I5B/.angular-guide-project.json" ] || I5B_OK=1
-[ ! -f "$I5B/node_modules/some-pkg/.angular-guide-project.json" ] || I5B_OK=1
+[ ! -f "$(profile_of "$I5B")" ] || I5B_OK=1
+[ ! -f "$(profile_of "$I5B/node_modules/some-pkg")" ] || I5B_OK=1
 check I5b-monorepo-skips-node-modules "angular.json+package.json under node_modules is never treated as a workspace root" "$I5B_OK"
 
 # Two angular.json files at the same shallowest depth: genuinely ambiguous.
@@ -1220,9 +1226,9 @@ cd "$I5C" || exit 1
 run "" bash "$DETECT"
 I5C_OK=0
 [ "$CODE" = "0" ] || I5C_OK=1
-[ ! -f "$I5C/apps/web/.angular-guide-project.json" ] || I5C_OK=1
-[ ! -f "$I5C/apps/admin/.angular-guide-project.json" ] || I5C_OK=1
-[ ! -f "$I5C/.angular-guide-project.json" ] || I5C_OK=1
+[ ! -f "$(profile_of "$I5C/apps/web")" ] || I5C_OK=1
+[ ! -f "$(profile_of "$I5C/apps/admin")" ] || I5C_OK=1
+[ ! -f "$(profile_of "$I5C")" ] || I5C_OK=1
 check I5c-monorepo-ambiguous-writes-no-profile "two angular.json at the same depth -> no profile written, exit 0" "$I5C_OK"
 
 cd "$ROOT" || exit 1
@@ -1578,6 +1584,61 @@ expect FP-N105-injected-document 0 none ""
 
 post_file "$V22/src/app/d.component.ts" 'export class D { w() { return window.innerWidth; } }'
 expect FP-N105-global-window-still-fires 2 err "NG105"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== 2d: the profile lives in the plugin data dir, refreshes itself =="
+###############################################################################
+
+# P1: detection writes nothing into the workspace.
+P1="$TMPROOT/p1"; ng_workspace "$P1" "22.0.0"; cd "$P1" || exit 1
+run "" bash "$DETECT"
+P1_OK=0
+[ -f "$(profile_of "$P1")" ] || P1_OK=1
+[ -z "$(find "$P1" -name '.angular-guide-*' 2>/dev/null)" ] || P1_OK=1
+printf '%s' "$OUT" | grep -qF "$CLAUDE_PLUGIN_DATA" || P1_OK=1
+check P1-profile-outside-workspace "profile cached under CLAUDE_PLUGIN_DATA, nothing written in the workspace" "$P1_OK"
+
+# P2: a profile older than package.json is re-detected by the next hook,
+# so an `ng update` mid-session takes effect without a new session.
+P2="$TMPROOT/p2"; ng_workspace "$P2" "21.0.0"; mkdir -p "$P2/src/app"; cd "$P2" || exit 1
+bash "$DETECT" >/dev/null 2>&1
+ONPUSH='@Component({ changeDetection: ChangeDetectionStrategy.OnPush }) export class A {}'
+run "$(write_json "$P2/src/app/a.ts" "$ONPUSH")" bash "$HOOK_LINT" pre
+P2_OK=0; [ "$CODE" = "0" ] || P2_OK=1
+ng_workspace "$P2" "22.0.0"
+python3 -I -c 'import os,sys,time; t=time.time()+5; os.utime(sys.argv[1], (t, t))' "$P2/package.json"
+run "$(write_json "$P2/src/app/a.ts" "$ONPUSH")" bash "$HOOK_LINT" pre
+[ "$CODE" = "2" ] || P2_OK=1
+check P2-stale-profile-refreshes "package.json newer than the profile -> re-detected (v21 -> v22 turns NG006 on)" "$P2_OK"
+
+# P3: a workspace never seen at SessionStart is detected on first use.
+P3="$TMPROOT/p3"; ng_workspace "$P3" "22.0.0"; mkdir -p "$P3/src/app"
+cd "$TMPROOT" || exit 1
+run "$(write_json "$P3/src/app/a.ts" '@Component({ standalone: true }) export class A {}')" bash "$HOOK_LINT" pre
+expect P3-lazy-detection 2 err "NG001"
+
+# P4: a monorepo session started at the repo root (I5) records which
+# workspace it found, so hooks running from the root find it too.
+P4=$(sa_context "$I5A")
+P4_OK=0
+printf '%s' "$P4" | grep -qF "NG001" || P4_OK=1
+check P4-monorepo-root-index "subagent started at the monorepo root gets the nested workspace's rules" "$P4_OK"
+
+# P5: without CLAUDE_PLUGIN_DATA (older Claude Code), fall back to the XDG cache.
+P5="$TMPROOT/p5"; ng_workspace "$P5" "22.0.0"; cd "$P5" || exit 1
+env -u CLAUDE_PLUGIN_DATA XDG_CACHE_HOME="$TMPROOT/xdg" bash "$DETECT" >/dev/null 2>&1
+P5_OK=0
+[ -n "$(find "$TMPROOT/xdg/angular-guide" -name '*.json' 2>/dev/null)" ] || P5_OK=1
+check P5-xdg-fallback "no CLAUDE_PLUGIN_DATA -> profile under XDG_CACHE_HOME/angular-guide" "$P5_OK"
+
+# P6: the profile's plugin_version comes from VERSION, not a hardcoded copy.
+P6_OK=0
+grep -q "\"plugin_version\": \"$(tr -d '[:space:]' < "$ROOT/VERSION")\"" "$(profile_of "$P1")" || P6_OK=1
+grep -q 'PLUGIN_VERSION="' "$ROOT/scripts/detect_project.sh" && P6_OK=1
+check P6-version-single-source "plugin_version read from VERSION" "$P6_OK"
 
 cd "$ROOT" || exit 1
 

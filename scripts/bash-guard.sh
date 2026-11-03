@@ -17,17 +17,7 @@ print((d.get("tool_input", {}) or {}).get("command", "") or "")
 
 [ -n "${CMD:-}" ] || exit 0
 
-find_profile() {
-  local dir="$PWD"
-  while [ "$dir" != "/" ]; do
-    if [ -f "$dir/.angular-guide-project.json" ]; then
-      echo "$dir/.angular-guide-project.json"; return 0
-    fi
-    dir="$(dirname "$dir")"
-  done
-  return 0
-}
-PROFILE=$(find_profile 2>/dev/null || true)
+PROFILE=$(python3 -I "$(dirname "$0")/ag_profile.py" resolve "$PWD" 2>/dev/null)
 
 profile_str() { # <key> — echoes the string value, empty if unavailable
   [ -n "${PROFILE:-}" ] && [ -f "$PROFILE" ] || return 0

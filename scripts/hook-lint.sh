@@ -128,28 +128,15 @@ EXT=$(printf '%s' "${FILE_PATH##*.}" | tr '[:upper:]' '[:lower:]')
 case "$EXT" in ts|html) ;; *) exit 0 ;; esac
 
 # ------------------------------------------------------------------ profile
-# Walk up from the edited file (NOT $PWD — the hook's cwd may differ from the
-# workspace root) to find the profile written by detect_project.sh.
-find_profile() {
-  local dir
-  dir="$(cd "$(dirname "$FILE_PATH")" 2>/dev/null && pwd)" || dir="$PWD"
-  while [ "$dir" != "/" ]; do
-    if [ -f "$dir/.angular-guide-project.json" ]; then
-      echo "$dir/.angular-guide-project.json"; return 0
-    fi
-    dir="$(dirname "$dir")"
-  done
-  [ -f "$PWD/.angular-guide-project.json" ] && echo "$PWD/.angular-guide-project.json"
-  return 0
-}
-PROFILE=$(find_profile 2>/dev/null || true)
+# Resolve from the edited file (NOT $PWD — the hook's cwd may differ from the
+# workspace root). ag_profile.py detects or refreshes the profile as needed.
+PROFILE=$(python3 -I "$(dirname "$0")/ag_profile.py" resolve "$(dirname "$FILE_PATH")" 2>/dev/null)
 
 # I6: NG007/008/009/010/011/012/014/015 have no version gate, so without
 # this check they would fire in any .ts file in any repository at all — a
-# plain Express file in a non-Angular repo would get blocked. No cached
-# profile anywhere up the tree means detect_project.sh never found an
-# angular.json here, i.e. this is not an Angular workspace (or the plugin
-# is simply inert here), so the whole hook does nothing.
+# plain Express file in a non-Angular repo would get blocked. No profile
+# means there is no angular.json up the tree from the edited file, i.e. this
+# is not an Angular workspace, so the whole hook does nothing.
 #
 # A profile that DOES exist but reports angular_major "unknown" is a
 # different case: detect_project.sh found both angular.json and

@@ -5,40 +5,26 @@
 # Claude Code only injects SubagentStart output that arrives as JSON
 # (hookSpecificOutput.additionalContext); plain stdout goes to the debug log.
 #
-# Only runs inside an Angular workspace (a cached profile exists up the tree
-# from the payload's cwd), and includes only the rules whose gates the
-# profile turns on — the same gates hook-lint.sh applies. Always exits 0.
+# Only runs inside an Angular workspace (a profile resolves from the
+# payload's cwd), and includes only the rules whose gates the profile turns
+# on — the same gates hook-lint.sh applies. Always exits 0.
 
 set -u
 
 INPUT=$(cat)
 
-python3 -I - "$INPUT" <<'PY' 2>/dev/null
+python3 -I -B - "$INPUT" "$(dirname "$0")" <<'PY' 2>/dev/null
 import json, os, sys
 
 try:
     payload = json.loads(sys.argv[1])
     start = payload.get("cwd") or os.getcwd()
+    sys.path.insert(0, sys.argv[2])
+    import ag_profile
+    _, profile = ag_profile.ensure(start)
 except Exception:
     sys.exit(0)
-
-def find_profile(d):
-    d = os.path.abspath(d)
-    while True:
-        p = os.path.join(d, ".angular-guide-project.json")
-        if os.path.isfile(p):
-            return p
-        parent = os.path.dirname(d)
-        if parent == d:
-            return None
-        d = parent
-
-try:
-    path = find_profile(start)
-    if not path:
-        sys.exit(0)
-    profile = json.load(open(path))
-except Exception:
+if not profile:
     sys.exit(0)
 
 v20 = profile.get("standalone_default") is True

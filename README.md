@@ -87,8 +87,8 @@ function names out of `scripts/hook-lint.sh` and `BGNNN` identifiers out of
 
 ### BG001–BG006 — Bash guard (`PreToolUse` on `Bash`)
 
-Runs before any Bash command. Reads `.angular-guide-project.json` for the package
-manager it compares against; everything else here is command-text pattern matching, not
+Runs before any Bash command. Reads the workspace profile (see [Version
+awareness](#version-awareness)) for the package manager it compares against; everything else here is command-text pattern matching, not
 version-gated.
 
 | ID | Catches | Fix | Gate |
@@ -150,11 +150,21 @@ model, but the write already happened — nothing is undone.
 
 ## Version awareness
 
-`SessionStart` runs `scripts/detect_project.sh`, which walks up from the current
-directory for `angular.json`, reads the Angular version from `package.json` (falling
-back to `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, or `bun.lock` if
-`package.json` only has a range), and writes `.angular-guide-project.json` at the
-workspace root:
+Every rule is gated on a workspace profile built by `scripts/ag_profile.py`. It walks
+up for `angular.json`, reads the Angular version from `package.json` (falling back to
+`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, or `bun.lock` if `package.json`
+only has a range), and caches the result in the plugin's data directory
+(`$CLAUDE_PLUGIN_DATA/profiles/`, or `$XDG_CACHE_HOME/angular-guide/profiles/` on Claude
+Code versions without it). **Nothing is written into your repository.**
+
+`SessionStart` builds the profile and prints a summary into the session. In a monorepo
+started at the repo root it also searches up to six levels down for a single
+`angular.json`, and remembers that root for later hooks. Every other hook resolves the
+profile from the file or directory it is working on, detecting it on first use and
+re-detecting it whenever `package.json`, `angular.json`, `tsconfig.json`, or a lockfile
+is newer than the cache — so an `ng update` mid-session takes effect on the next write.
+
+A profile looks like this:
 
 ```json
 {

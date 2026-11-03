@@ -24,7 +24,20 @@ All notable changes to `angular-guide` are documented in this file.
   Firebase `apiKey` (`AIza…`) and Stripe publishable keys no longer block.
 - NG105 no longer flags `this.document` from `inject(DOCUMENT)` — the rule's own fix.
 
+- **Security:** every hook now runs Python in isolated mode (`-I`). Before, a
+  repository containing `json.py`, `tempfile.py` or `datetime.py` had that file executed
+  by every hook, SessionStart included.
+
 ### Changed
+
+- **The workspace profile no longer lives in your repository.** It is cached under
+  `$CLAUDE_PLUGIN_DATA` (or `$XDG_CACHE_HOME/angular-guide`), so there is nothing to
+  gitignore; an old `.angular-guide-project.json` can be deleted. Hooks detect a
+  workspace on first use and re-detect when `package.json`, `angular.json`,
+  `tsconfig.json` or a lockfile changes, so `ng update` mid-session takes effect
+  immediately. A monorepo session started at the repo root now also reaches the
+  subagent and Bash hooks.
+- The plugin version is read from `VERSION` rather than a copy in `detect_project.sh`.
 
 - `data-loading` shows the call-site pattern for HTTP commands
   (`await firstValueFrom(...)`), which NG010 accepts.
