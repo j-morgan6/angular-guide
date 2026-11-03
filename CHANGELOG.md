@@ -74,6 +74,15 @@ All notable changes to `angular-guide` are documented in this file.
 - `data-loading` shows the call-site pattern for HTTP commands
   (`await firstValueFrom(...)`), which NG010 accepts.
 
+### Upgrading from 1.0.0
+
+- Update the plugin through `/plugin`, then start a new session.
+- Delete `.angular-guide-project.json` from your Angular workspaces and drop it from
+  `.gitignore`; the profile is now cached in the plugin's data directory.
+- If you edited the installed plugin's `hooks.json` or scripts to turn a rule off, use the
+  new **Disabled rules** option (`/plugin configure`) or `ANGULAR_GUIDE_DISABLED_RULES`
+  instead — see the README's Tuning section.
+
 ## 1.0.0 — 2026-09-06
 
 Initial release.
