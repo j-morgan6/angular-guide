@@ -87,22 +87,25 @@ function names out of `scripts/hook-lint.sh` and `BGNNN` identifiers out of
 
 ### BG001–BG006 — Bash guard (`PreToolUse` on `Bash`)
 
-Runs before any Bash command. Reads the workspace profile (see [Version
-awareness](#version-awareness)) for the package manager it compares against; everything else here is command-text pattern matching, not
-version-gated.
+Runs before any Bash command, **only inside an Angular workspace** (one with a profile —
+see [Version awareness](#version-awareness)). The command line is parsed, not
+pattern-matched: it is split into simple commands at `;`, `&&`, `||`, `|` and newlines,
+quoted text stays a single argument, wrappers (`sudo`, `env`, `time`, `npx`/`bunx`,
+`pnpm`/`yarn exec`, `npm exec`) are removed, and a `bash -c "..."` string is parsed in
+turn. So `echo 'rm -rf yarn.lock'` or a commit message that mentions `ng build --prod`
+never matches, and a `--force` belonging to one command is never credited to another.
 
-| ID | Catches | Fix | Gate |
-|---|---|---|---|
-| BG001 | A `git push --force`/`-f` that targets the default branch. It checks the refspec's *destination* side of a `src:dst` pair (so `main:feature/x` is not flagged), and when no refspec names a branch at all it infers the target from the currently checked-out branch via `git symbolic-ref --short -q HEAD`. | Use `--force-with-lease`, and push to a feature branch instead. | none |
-| BG002 | `ng build --prod` | Run `ng build` — production is the default configuration. The flag was removed in Angular 12. | none |
-| BG003 | A package-manager command (`install`/`i`/`add`/`ci`) run with a manager other than the one the workspace's lockfile implies (from the cached profile's `package_manager`). | Use the manager the lockfile names — mixing managers produces a second lockfile and a divergent dependency tree. | requires a cached profile |
-| BG004 | `ng test` invoked without a flag that prevents watch mode (`--watch=false`, `--no-watch`, `--run`, or `--ci`). | Add `--watch=false` (Karma) or `--run` (Vitest) — otherwise the command hangs the agent session indefinitely. | none |
-| BG005 | `rm -r`/`-rf`/similar run together with a lockfile path (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`) in the same command. | Delete `node_modules` alone and reinstall; only remove the lockfile when deliberately re-resolving the whole dependency tree. | none |
-| BG006 | `ng update --force` | Resolve the reported incompatibilities, or update one package at a time — `--force` bypasses the peer-dependency and migration checks that make updating safe. | none |
+| ID | Catches | Fix |
+|---|---|---|
+| BG001 | A force push (`--force`, `-f`, a combined short flag like `-fu`, or a `+ref` refspec) whose destination is `main`/`master`. The *destination* side of a `src:dst` refspec decides (so `main:feature/x` is not flagged); `refs/heads/main` counts as `main`; `HEAD`, or no refspec at all, means the checked-out branch (`git symbolic-ref --short -q HEAD`, honouring `git -C <dir>`). | Use `--force-with-lease`, and push to a feature branch instead. |
+| BG002 | `ng build --prod` | Run `ng build` — production is the default configuration. The flag was removed in Angular 12. |
+| BG003 | A package-manager `install`/`i`/`add`/`ci` with a manager other than the one the workspace's lockfile implies (the profile's `package_manager`). | Use the manager the lockfile names — mixing managers produces a second lockfile and a divergent dependency tree. |
+| BG004 | `ng test` without a flag that prevents watch mode (`--watch=false`, `--watch false`, `--no-watch`, `--run`, or `--ci`) — and `npm test`, `npm run test`, `pnpm test` or `yarn test` when the workspace's `test` script runs `ng test` without one and none is passed through. | Add `--watch=false` (Karma) or `--run` (Vitest); through a package manager, `npm test -- --watch=false`. Otherwise the command hangs the agent session indefinitely. |
+| BG005 | `rm` with a lockfile (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `bun.lockb`) among its arguments. | Delete `node_modules` alone and reinstall; only remove the lockfile when deliberately re-resolving the whole dependency tree. |
+| BG006 | `ng update --force` | Resolve the reported incompatibilities, or update one package at a time — `--force` bypasses the peer-dependency and migration checks that make updating safe. |
 
-BG001 resolves a fully-qualified destination ref like `refs/heads/main` to the same target
-as a bare `main` — both as the destination side of a colon refspec (`HEAD:refs/heads/main`)
-and as a standalone ref token (`git push --force origin refs/heads/main`).
+Commands built at runtime — `$(...)`, backticks, `eval`, variables holding a command —
+are not expanded, so a rule inside one is not seen.
 
 ### NG001–NG018 — blocking checks (`PreToolUse` on `Write`/`Edit`, `hook-lint.sh pre`)
 

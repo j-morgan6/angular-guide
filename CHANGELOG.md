@@ -37,6 +37,12 @@ All notable changes to `angular-guide` are documented in this file.
   `tsconfig.json` or a lockfile changes, so `ng update` mid-session takes effect
   immediately. A monorepo session started at the repo root now also reaches the
   subagent and Bash hooks.
+- **The Bash guard only runs inside an Angular workspace, and parses commands** instead
+  of matching text. Quoted text (an `echo`, a commit message) no longer triggers a rule,
+  and a flag is only credited to the command it belongs to. It now also catches
+  `npx ng ...`, `bash -c "..."`, `+main` refspecs, `-fu`-style combined flags,
+  `git push -f origin HEAD`, `rm` of a lockfile without `-r`, and `npm`/`pnpm`/`yarn test`
+  when the `test` script runs `ng test` in watch mode.
 - The plugin version is read from `VERSION` rather than a copy in `detect_project.sh`.
 
 - `data-loading` shows the call-site pattern for HTTP commands

@@ -449,13 +449,14 @@ echo "== bash-guard.sh (BG001/BG003/BG004/BG005 hardening) =="
 # Real git repos with controlled branches, for the BG001 current-branch
 # inference arm (an unqualified force push names no branch, so it pushes
 # whichever branch is checked out).
-GITMAIN="$TMPROOT/bg-git-main"; mkdir -p "$GITMAIN"
+# The guard only runs inside an Angular workspace, so each fixture is one.
+GITMAIN="$TMPROOT/bg-git-main"; ng_workspace "$GITMAIN" "22.0.0"
 ( cd "$GITMAIN" && git init -q -b main . ) >/dev/null 2>&1
 
-GITFEAT="$TMPROOT/bg-git-feature"; mkdir -p "$GITFEAT"
+GITFEAT="$TMPROOT/bg-git-feature"; ng_workspace "$GITFEAT" "22.0.0"
 ( cd "$GITFEAT" && git init -q -b main . && git checkout -q -b feature/x ) >/dev/null 2>&1
 
-GITNONE="$TMPROOT/bg-no-git"; mkdir -p "$GITNONE"
+GITNONE="$TMPROOT/bg-no-git"; ng_workspace "$GITNONE" "22.0.0"
 
 cd "$GITMAIN" || exit 1
 run "$(bash_json "$PUSH $FORCE")" bash "$BASH_GUARD"
@@ -510,7 +511,7 @@ expect B25-colon-refspec-src-main-dst-feature-ok 0 none ""
 # Finding 3 (round 3 review): detached HEAD, as a real fixture rather than an
 # argument — no checked-out branch to infer, so an unqualified force push
 # must fail open.
-GITDETACHED="$TMPROOT/bg-git-detached"; mkdir -p "$GITDETACHED"
+GITDETACHED="$TMPROOT/bg-git-detached"; ng_workspace "$GITDETACHED" "22.0.0"
 ( cd "$GITDETACHED" && git init -q -b main . \
     && git -c user.email=a@a -c user.name=a commit -q --allow-empty -m init \
     && git checkout -q --detach ) >/dev/null 2>&1
@@ -1639,6 +1640,74 @@ P6_OK=0
 grep -q "\"plugin_version\": \"$(tr -d '[:space:]' < "$ROOT/VERSION")\"" "$(profile_of "$P1")" || P6_OK=1
 grep -q 'PLUGIN_VERSION="' "$ROOT/scripts/detect_project.sh" && P6_OK=1
 check P6-version-single-source "plugin_version read from VERSION" "$P6_OK"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== 2c: bash guard runs only in Angular workspaces, on parsed commands =="
+###############################################################################
+
+# Outside an Angular workspace the guard does nothing at all.
+cd "$SA_NONNG" || exit 1
+for cmd in 'rm -rf node_modules package-lock.json' 'ng build --prod' "$PUSH $FORCE origin main"; do
+  run "$(bash_json "$cmd")" bash "$BASH_GUARD"
+  expect "C-scope-non-angular: $cmd" 0 none ""
+done
+
+# Rules match commands, not text inside quoted arguments.
+cd "$WORK" || exit 1
+run "$(bash_json "echo 'never rm -rf node_modules pnpm-lock.yaml'")" bash "$BASH_GUARD"
+expect C-text-echo-quoted 0 none ""
+run "$(bash_json 'git commit -m "docs: why rm -rf pnpm-lock.yaml and ng build --prod are bad"')" bash "$BASH_GUARD"
+expect C-text-commit-message 0 none ""
+run "$(bash_json "$PUSH origin main && rm $FORCE tmp.txt")" bash "$BASH_GUARD"
+expect C-force-belongs-to-another-command 0 none ""
+
+# ...but a real command in any position, or wrapped, is still parsed.
+run "$(bash_json 'cd src && ng build --prod')" bash "$BASH_GUARD"
+expect C-second-command 2 err "BG002"
+run "$(bash_json 'npx ng build --prod')" bash "$BASH_GUARD"
+expect C-npx-ng 2 err "BG002"
+run "$(bash_json 'bash -c "ng update @angular/core --force"')" bash "$BASH_GUARD"
+expect C-bash-c-string 2 err "BG006"
+run "$(bash_json 'rm pnpm-lock.yaml')" bash "$BASH_GUARD"
+expect C-rm-lockfile-without-r 2 err "BG005"
+
+# BG004 also covers the package-manager test script when it runs ng test.
+python3 -I -c '
+import json, sys
+p = sys.argv[1] + "/package.json"
+d = json.load(open(p)); d["scripts"] = {"test": "ng test"}; json.dump(d, open(p, "w"))
+' "$WORK"
+run "$(bash_json 'pnpm test')" bash "$BASH_GUARD"
+expect C-pm-test-runs-ng-test 2 err "BG004"
+run "$(bash_json 'npm run test')" bash "$BASH_GUARD"
+expect C-npm-run-test 2 err "BG004"
+run "$(bash_json 'npm test -- --watch=false')" bash "$BASH_GUARD"
+expect C-npm-test-passthrough-nowatch-ok 0 none ""
+python3 -I -c '
+import json, sys
+p = sys.argv[1] + "/package.json"
+d = json.load(open(p)); d["scripts"] = {"test": "ng test --no-watch"}; json.dump(d, open(p, "w"))
+' "$WORK"
+run "$(bash_json 'pnpm test')" bash "$BASH_GUARD"
+expect C-pm-test-script-already-nowatch-ok 0 none ""
+
+# BG001: `+ref` forces that ref; HEAD names the checked-out branch;
+# combined short flags still carry -f.
+cd "$GITMAIN" || exit 1
+run "$(bash_json "$PUSH origin +main")" bash "$BASH_GUARD"
+expect C-plus-refspec-main 2 err "BG001"
+run "$(bash_json "$PUSH origin +feature/x")" bash "$BASH_GUARD"
+expect C-plus-refspec-feature-ok 0 none ""
+run "$(bash_json "$PUSH $FORCE origin HEAD")" bash "$BASH_GUARD"
+expect C-head-on-main 2 err "BG001"
+run "$(bash_json "$PUSH -fu origin main")" bash "$BASH_GUARD"
+expect C-combined-short-flags 2 err "BG001"
+cd "$GITFEAT" || exit 1
+run "$(bash_json "$PUSH $FORCE origin HEAD")" bash "$BASH_GUARD"
+expect C-head-on-feature-ok 0 none ""
 
 cd "$ROOT" || exit 1
 
