@@ -199,10 +199,12 @@ A profile looks like this:
   "ssr": false,
   "state_lib": "none",
   "package_manager": "npm",
-  "typescript_strict": true,
-  "projects": ["my-app"]
+  "typescript_strict": true
 }
 ```
+
+`state_lib`, `ssr`, and `typescript_strict` gate no rule; they are in the SessionStart
+summary so the model knows the workspace's state library, SSR setup, and strictness.
 
 **An unknown version skips gated rules — it never guesses.** If `@angular/core` can't be
 resolved from `package.json` or any recognized lockfile, `angular_major` is `"unknown"`
@@ -224,6 +226,17 @@ exercises `detect_project.sh`, `hook-lint.sh` (both modes), `bash-guard.sh`,
 Drift checks fail the build if the generated docs are stale (`R2`), if a skill cites a
 rule ID `rules.py` doesn't define (`S2`), or if `rules.py` and the implementations in
 `lint.py`/`guard.py` disagree about which rules exist (`S3`).
+
+## Releasing
+
+```
+python3 tools/release.py 1.2.0
+```
+
+writes the version into `VERSION`, `.claude-plugin/plugin.json`, and
+`.claude-plugin/marketplace.json`, and turns the CHANGELOG's `## Unreleased` heading into
+`## 1.2.0 — <today>`. Everything else reads `VERSION` at runtime. It refuses if there is no
+`## Unreleased` section.
 
 ## Tuning
 

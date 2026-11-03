@@ -1899,6 +1899,44 @@ cd "$ROOT" || exit 1
 
 ###############################################################################
 echo
+echo "== 3c: one release step sets the version everywhere; no unused profile fields =="
+###############################################################################
+
+REL="$TMPROOT/release"; mkdir -p "$REL/.claude-plugin"
+cp "$ROOT/VERSION" "$ROOT/CHANGELOG.md" "$REL/"
+cp "$ROOT/.claude-plugin/plugin.json" "$ROOT/.claude-plugin/marketplace.json" "$REL/.claude-plugin/"
+run "" python3 -I "$ROOT/tools/release.py" 9.8.7 --date 2030-01-02 --root "$REL"
+REL_OK=0
+[ "$CODE" = "0" ] || REL_OK=1
+[ "$(tr -d '[:space:]' < "$REL/VERSION")" = "9.8.7" ] || REL_OK=1
+python3 -I -c '
+import json, sys
+r = sys.argv[1]
+assert json.load(open(r + "/.claude-plugin/plugin.json"))["version"] == "9.8.7"
+assert json.load(open(r + "/.claude-plugin/marketplace.json"))["plugins"][0]["version"] == "9.8.7"
+c = open(r + "/CHANGELOG.md").read()
+assert "## 9.8.7 — 2030-01-02" in c and "## Unreleased" not in c
+' "$REL" 2>/dev/null || REL_OK=1
+check REL-sets-every-version "release.py updates VERSION, both manifests, and the CHANGELOG heading" "$REL_OK"
+
+# No Unreleased section means nothing to release: refuse, change nothing.
+run "" python3 -I "$ROOT/tools/release.py" 9.8.8 --root "$REL"
+REL2_OK=0
+[ "$CODE" != "0" ] || REL2_OK=1
+[ "$(tr -d '[:space:]' < "$REL/VERSION")" = "9.8.7" ] || REL2_OK=1
+check REL-refuses-without-unreleased "no Unreleased section -> non-zero exit, files untouched" "$REL2_OK"
+
+run "" python3 -I "$ROOT/tools/release.py" banana --root "$REL"
+expect REL-rejects-bad-version 1 err "version"
+
+PF_OK=0
+grep -q '"projects"' "$(profile_of "$V22")" && PF_OK=1
+check PF-no-projects-field "profile no longer carries the unused projects list" "$PF_OK"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || { printf '  - %s\n' "${FAILED_NAMES[@]}"; exit 1; }
 exit 0

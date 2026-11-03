@@ -299,7 +299,6 @@ def detect(root):
         "state_lib": state_lib,
         "package_manager": package_manager,
         "typescript_strict": tsconfig_strict,
-        "projects": sorted((ng.get("projects") or {}).keys()),
     }
 
 

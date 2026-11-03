@@ -67,7 +67,9 @@ All notable changes to `angular-guide` are documented in this file.
   moved from inline Python in `bash-guard.sh` to `scripts/guard.py`.
 - **Advisories (NG101–NG106) are no longer repeated on every edit.** Within a session,
   a file's advisory comes back only when a change adds another instance.
-- The plugin version is read from `VERSION` rather than a copy in `detect_project.sh`.
+- The plugin version is read from `VERSION` rather than a copy in `detect_project.sh`,
+  and `tools/release.py` sets it in `VERSION`, both manifests, and the CHANGELOG at once.
+- The profile no longer records `projects`, which nothing used.
 
 - `data-loading` shows the call-site pattern for HTTP commands
   (`await firstValueFrom(...)`), which NG010 accepts.
