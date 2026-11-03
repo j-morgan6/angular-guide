@@ -277,7 +277,7 @@ RULES = [
         "fix": "Import `NgOptimizedImage` and use `ngSrc` with explicit `width`/`height` (or `fill`): `<img ngSrc=\"/assets/hero.png\" width=\"800\" height=\"600\" alt=\"Hero\">`",
         "example": "It adds lazy loading, srcset generation, and priority hints, and it prevents layout shift.",
         "skill": "performance-and-zoneless",
-        "catches": "A static `<img ... src=\"...\">` with no `NgOptimizedImage`, including a tag Prettier has wrapped across lines.",
+        "catches": "A static `<img ... src=\"...\">` with no `NgOptimizedImage`, including a tag Prettier has wrapped across lines. Inline `data:` URIs are skipped — `NgOptimizedImage` does not support them.",
     },
     {
         "id": "NG105", "hook": "post", "gate": None, "section": "Advisory",

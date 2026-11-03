@@ -1933,6 +1933,14 @@ PF_OK=0
 grep -q '"projects"' "$(profile_of "$V22")" && PF_OK=1
 check PF-no-projects-field "profile no longer carries the unused projects list" "$PF_OK"
 
+# NG104: NgOptimizedImage does not support inline data: URIs.
+cd "$V22" || exit 1
+post_file "$V22/src/app/icon.html" '<img src="data:image/svg+xml;base64,PHN2Zz4=" alt="">'
+expect N104-data-uri-ok 0 none ""
+post_file "$V22/src/app/icon.html" "<img alt='' src='DATA:image/png;base64,AAA'>
+<img src=\"/assets/photo.jpg\" alt=\"\">"
+expect N104-data-uri-does-not-hide-real-img 2 err "NG104"
+
 cd "$ROOT" || exit 1
 
 ###############################################################################

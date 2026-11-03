@@ -22,8 +22,8 @@ All notable changes to `angular-guide` are documented in this file.
   `untracked()` as a general way out.
 - NG016 judges the value, not just the key name: `storageKey: "app-theme"`, `hotkey`,
   Firebase `apiKey` (`AIza…`) and Stripe publishable keys no longer block.
+- NG104 no longer flags `<img src="data:...">`, which `NgOptimizedImage` cannot handle.
 - NG105 no longer flags `this.document` from `inject(DOCUMENT)` — the rule's own fix.
-
 - **Security:** every hook now runs Python in isolated mode (`-I`). Before, a
   repository containing `json.py`, `tempfile.py` or `datetime.py` had that file executed
   by every hook, SessionStart included.

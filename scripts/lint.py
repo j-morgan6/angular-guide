@@ -502,8 +502,9 @@ def check_ng103(c):
 @check("NG104")
 def check_ng104(c):
     # [^>]* spans the newlines Prettier puts inside a long <img> tag but can
-    # never cross a `>` into a neighbouring tag.
-    return find_all(r"<img[^>]*\ssrc=[\"']", c.code)
+    # never cross a `>` into a neighbouring tag. Inline data: URIs are
+    # skipped — NgOptimizedImage does not support them.
+    return find_all(r"<img[^>]*\ssrc=[\"'](?![Dd][Aa][Tt][Aa]:)", c.code)
 
 
 @check("NG105")
