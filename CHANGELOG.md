@@ -65,6 +65,8 @@ All notable changes to `angular-guide` are documented in this file.
   subagent rules, the README rule tables, and the `CLAUDE.md.template` rule list are all
   rendered from it (`tools/gen_docs.py`; the tests fail on stale docs). The Bash rules
   moved from inline Python in `bash-guard.sh` to `scripts/guard.py`.
+- **Advisories (NG101–NG106) are no longer repeated on every edit.** Within a session,
+  a file's advisory comes back only when a change adds another instance.
 - The plugin version is read from `VERSION` rather than a copy in `detect_project.sh`.
 
 - `data-loading` shows the call-site pattern for HTTP commands

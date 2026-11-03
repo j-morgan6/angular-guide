@@ -149,7 +149,10 @@ in `scripts/rules.py`.
 ### NG101–NG106 — advisory checks (`PostToolUse` on `Write`/`Edit`, `hook-lint.sh post`)
 
 Run against the file **already written to disk**. A finding exits 2 and is shown to the
-model, but the write already happened — nothing is undone.
+model, but the write already happened — nothing is undone. Within a session, an advisory is
+reported for a file once: it comes back only when a later change raises that rule's count
+in the file (adds another eager route, another `<img src>`, ...). The counts are kept per
+session under the plugin's data directory and pruned after seven days.
 
 <!-- generated:rules-post -->
 | ID | Catches | Fix | Gate |

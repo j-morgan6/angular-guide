@@ -1872,6 +1872,33 @@ cd "$ROOT" || exit 1
 
 ###############################################################################
 echo
+echo "== 3b: advisories are not repeated within a session =="
+###############################################################################
+
+cd "$V22" || exit 1
+# post_in_session <session> <path> <content>
+post_in_session() {
+  printf '%s' "$3" > "$2"
+  run "$(python3 -I -c 'import json,sys; print(json.dumps({"session_id":sys.argv[1],"tool_name":"Edit","tool_input":{"file_path":sys.argv[2]}}))' "$1" "$2")" bash "$HOOK_LINT" post
+}
+HERO="$V22/src/app/hero.component.html"
+post_in_session s1 "$HERO" '<img src="/a.png" alt="">'
+expect ADV-first-report 2 err "NG104"
+post_in_session s1 "$HERO" '<h1>Hi</h1><img src="/a.png" alt="">'
+expect ADV-unchanged-count-silent 0 none ""
+post_in_session s1 "$HERO" '<h1>Hi</h1><img src="/a.png" alt=""><img src="/b.png" alt="">'
+expect ADV-new-instance-reported 2 err "NG104"
+post_in_session s2 "$HERO" '<h1>Hi</h1><img src="/a.png" alt=""><img src="/b.png" alt="">'
+expect ADV-new-session-reports-again 2 err "NG104"
+# Fixing one and later re-adding it reports again.
+post_in_session s1 "$HERO" '<h1>Hi</h1><img src="/a.png" alt="">'
+post_in_session s1 "$HERO" '<h1>Hi</h1><img src="/a.png" alt=""><img src="/c.png" alt="">'
+expect ADV-readded-after-fix-reported 2 err "NG104"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || { printf '  - %s\n' "${FAILED_NAMES[@]}"; exit 1; }
 exit 0

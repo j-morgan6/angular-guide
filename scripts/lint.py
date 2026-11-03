@@ -20,11 +20,13 @@ exits 0 with no output — a plugin defect must never block a write.
 """
 
 import bisect
+import hashlib
 import json
 import math
 import os
 import re
 import sys
+import time
 from collections import Counter
 
 SCRIPTS = os.path.dirname(os.path.abspath(__file__))
@@ -603,6 +605,7 @@ def lint(mode, payload):
     after_ctx = Ctx(file_path, after, profile)
     before_ctx = Ctx(file_path, before, profile) if before else None
     disabled = ag_profile.disabled_rules()
+    reported = Reported(payload.get("session_id"), file_path) if mode == POST else None
 
     findings = []
     for r in rules.RULES:
@@ -611,13 +614,17 @@ def lint(mode, payload):
             continue
         fn = CHECKS[rule_id]
         hits = run_rule(rule_id, fn, after_ctx)
-        if not hits:
-            continue
-        had = len(run_rule(rule_id, fn, before_ctx)) if before_ctx else 0
+        if reported:
+            had = reported.swap(rule_id, len(hits))
+        else:
+            had = len(run_rule(rule_id, fn, before_ctx)) if hits and before_ctx else 0
         if len(hits) <= had:
             continue
         text = message_for(r, after_ctx)
-        if had:
+        if had and reported:
+            text += ("\n   ℹ️  %d of these were already reported for this file this session; "
+                     "this change adds %d." % (had, len(hits) - had))
+        elif had:
             text += ("\n   ℹ️  This file already had %d of these; this change adds %d. "
                      "Only the new ones block." % (had, len(hits) - had))
         for ignored_id, line in after_ctx.unreasoned:
@@ -625,7 +632,58 @@ def lint(mode, payload):
                 text += ("\n   ℹ️  The angular-guide-ignore comment for %s on line %d has no "
                          "`-- reason`, so it was not applied." % (rule_id, line))
         findings.append(text)
+    if reported:
+        reported.save()
     return findings
+
+
+class Reported:
+    """Advisory match counts already reported, per file, in this session.
+
+    Post-write rules see only the file as written, so without this every
+    edit to a file re-reports the same advisories. A rule is reported again
+    only when its count for the file rises above what this session last saw
+    (a fix followed by a re-add counts). No session_id means no memory.
+    """
+
+    KEEP_DAYS = 7
+
+    def __init__(self, session_id, file_path):
+        self.path, self.state = None, {}
+        self.file = os.path.realpath(file_path)
+        if not session_id:
+            return
+        folder = os.path.join(ag_profile.data_dir(), "advisories")
+        key = hashlib.sha256(str(session_id).encode("utf-8")).hexdigest()[:16]
+        self.path = os.path.join(folder, key + ".json")
+        self.state = ag_profile.load_json(self.path, {})
+        self.prune(folder)
+
+    def __bool__(self):
+        return self.path is not None
+
+    def swap(self, rule_id, count):
+        """Record the new count; return the previous one."""
+        counts = self.state.setdefault(self.file, {})
+        previous = counts.get(rule_id, 0)
+        counts[rule_id] = count
+        return previous
+
+    def save(self):
+        try:
+            ag_profile.write_json_atomic(self.path, self.state)
+        except Exception:
+            pass
+
+    def prune(self, folder):
+        cutoff = time.time() - self.KEEP_DAYS * 86400
+        try:
+            for name in os.listdir(folder):
+                p = os.path.join(folder, name)
+                if os.path.getmtime(p) < cutoff:
+                    os.remove(p)
+        except Exception:
+            pass
 
 
 def main(argv):
