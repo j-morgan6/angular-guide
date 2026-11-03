@@ -541,12 +541,12 @@ assert matchers == ["Bash", "Write|Edit"], matchers
 PY
 check W2-hooks-wiring "5 commands, CLAUDE_PLUGIN_ROOT paths, scripts exist and are executable" "$W2_OK"
 
+# Content and gating are covered by SA1-SA6; here only the fail-open contract:
+# garbage stdin still exits 0.
 W3_OK=0
-run "" bash "$SUBAGENT"
+run "not json" bash "$SUBAGENT"
 [ "$CODE" = "0" ] || W3_OK=1
-printf '%s' "$OUT" | grep -q "NG001" || W3_OK=1
-printf '%s' "$OUT" | grep -qF "inject()" || W3_OK=1
-check W3-subagent-rules "subagent-rules emits rules on stdout, exit 0" "$W3_OK"
+check W3-subagent-rules-fail-open "subagent-rules exits 0 on malformed input" "$W3_OK"
 
 # W4: per-event/matcher wiring — script AND trailing mode token, checked
 # together, so a hook-lint.sh pre/post swap between PreToolUse and
@@ -959,24 +959,31 @@ S1_OK=0
 python3 - "$ROOT" <<'PY' 2>/dev/null || S1_OK=1
 import os, re, sys, glob
 root = sys.argv[1]
-REQUIRED = ["name", "description", "file_patterns", "auto_suggest"]
+# `paths` is Claude Code's glob-scoping field for skills. `file_patterns`
+# and `auto_suggest` are not recognised and are silently ignored, so they
+# must not come back.
+REQUIRED = ["name", "description", "paths"]
 skills = sorted(glob.glob(os.path.join(root, "skills", "*", "SKILL.md")))
 assert skills, "no skills found"
 for p in skills:
     txt = open(p, encoding="utf-8").read()
     assert txt.startswith("---\n"), p + ": missing frontmatter"
     fm = txt.split("---", 2)[1]
-    for key in ("name:", "description:", "file_patterns:", "auto_suggest:"):
+    for key in ("name:", "description:", "paths:"):
         assert key in fm, "%s: frontmatter missing %s" % (p, key)
+    for key in ("file_patterns", "auto_suggest"):
+        assert not re.search(r"^%s:" % key, fm, re.M), "%s: unsupported key %s" % (p, key)
+    assert "Angular" in re.search(r"^description:(.*)$", fm, re.M).group(1), \
+        "%s: description must scope the skill to Angular" % p
     name = re.search(r"^name:\s*(\S+)", fm, re.M).group(1)
     assert name == os.path.basename(os.path.dirname(p)), \
         "%s: frontmatter name %r != directory name" % (p, name)
     # Order check: collect top-level frontmatter keys (matched at the start
     # of a line, so a key-like substring inside a value, e.g. "name:" typed
     # inside a description sentence, can never be mistaken for a real key),
-    # keep only the four required ones, and require they appear in the
+    # keep only the required ones, and require they appear in the
     # mandated relative order. Any other key a skill adds is untouched by
-    # this check -- the constraint is about the required four, not an
+    # this check -- the constraint is about the required keys, not an
     # exhaustive/forbidding schema.
     top_level_keys = re.findall(r"^([A-Za-z_][A-Za-z0-9_]*):", fm, re.M)
     required_in_order = [k for k in top_level_keys if k in REQUIRED]
@@ -1157,12 +1164,10 @@ expect I4-untracked-update-silent 0 none ""
 run "$(write_json "$V22/src/app/a.ts" 'effect(() => { untracked(() => console.log(this.a())); this.total.set(this.a()); });')" bash "$HOOK_LINT" pre
 expect I4-write-outside-untracked-still-fires 2 err "NG012"
 
-# Known, documented limitation (not fixed): a plain Map/WeakMap .set() call
-# inside an effect is indistinguishable from a signal .set() call without
-# type information, so it is still flagged. Pinned here as a known false
-# positive rather than silently left untested.
+# A Map/WeakMap .set(k, v) takes two arguments; a signal .set() takes one,
+# so the argument count tells them apart without type information.
 run "$(write_json "$V22/src/app/a.ts" 'effect(() => { this.cache.set(k, v); });')" bash "$HOOK_LINT" pre
-expect I4-plain-map-set-known-false-positive 2 err "NG012"
+expect I4-plain-map-set-not-flagged 0 none ""
 
 ###############################################################################
 echo
@@ -1384,6 +1389,170 @@ C1_OK=0
 [ -f "$C1_DIR/decoy.ts" ] || C1_OK=1
 [ "$(cat "$C1_DIR/decoy.ts" 2>/dev/null)" = "decoy-content" ] || C1_OK=1
 check C1-newline-filepath-no-deletion "newline-bearing file_path: exit 0, decoy file in cwd survives" "$C1_OK"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
+echo "== 1.1.0: SubagentStart emits JSON additionalContext, gated on the profile =="
+###############################################################################
+
+# Claude Code only injects SubagentStart output that arrives as JSON
+# hookSpecificOutput.additionalContext -- plain stdout goes to the debug log.
+# sa_context <dir> -- run subagent-rules.sh from <dir>, print additionalContext
+# (empty when stdout is empty or not the expected JSON shape).
+sa_context() {
+  cd "$1" || exit 1
+  run '{"hook_event_name":"SubagentStart"}' bash "$SUBAGENT"
+  printf '%s' "$OUT" | python3 -c '
+import json, sys
+raw = sys.stdin.read()
+if not raw.strip():
+    sys.exit(0)
+d = json.loads(raw)
+h = d["hookSpecificOutput"]
+assert h["hookEventName"] == "SubagentStart"
+print(h["additionalContext"])
+' 2>/dev/null
+}
+
+SA1=$(sa_context "$V22")
+SA1_OK=0
+[ "$CODE" = "0" ] || SA1_OK=1
+for want in NG001 NG004 NG006 NG013 NG017 "inject()" "Angular 22"; do
+  printf '%s' "$SA1" | grep -qF "$want" || SA1_OK=1
+done
+printf '%s' "$SA1" | grep -qF "NG018" && SA1_OK=1
+check SA1-v22-json-context "v22 zoneless, no vitest: JSON context with v20/v22/zoneless rules, no NG018" "$SA1_OK"
+
+SA2=$(sa_context "$V21")
+SA2_OK=0
+printf '%s' "$SA2" | grep -qF "NG001" || SA2_OK=1
+printf '%s' "$SA2" | grep -qF "NG006" && SA2_OK=1
+check SA2-v21-no-onpush-rule "v21: v20 rules present, NG006 (OnPush default) absent" "$SA2_OK"
+
+SA3=$(sa_context "$UNK")
+SA3_OK=0
+printf '%s' "$SA3" | grep -qF "NG007" || SA3_OK=1
+printf '%s' "$SA3" | grep -qF "NG001" && SA3_OK=1
+check SA3-unknown-version-ungated-only "unknown version: ungated rules only, no NG001" "$SA3_OK"
+
+SA_NONNG="$TMPROOT/not-angular"; mkdir -p "$SA_NONNG"
+sa_context "$SA_NONNG" >/dev/null
+SA4_OK=0
+[ "$CODE" = "0" ] && [ -z "$OUT" ] || SA4_OK=1
+check SA4-non-angular-silent "no profile anywhere: exit 0, no output" "$SA4_OK"
+
+# The hook payload's cwd wins over the process cwd.
+cd "$SA_NONNG" || exit 1
+run "$(python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"SubagentStart","cwd":sys.argv[1]}))' "$V22")" bash "$SUBAGENT"
+SA5_OK=0
+printf '%s' "$OUT" | grep -qF "NG001" || SA5_OK=1
+check SA5-payload-cwd "profile is found from the payload cwd, not just the process cwd" "$SA5_OK"
+
+VT="$TMPROOT/ng22-vitest"; ng_workspace "$VT" "22.0.0" '{"vitest":"^3.0.0"}'
+cd "$VT" || exit 1; bash "$DETECT" >/dev/null 2>&1
+SA6=$(sa_context "$VT")
+SA6_OK=0
+printf '%s' "$SA6" | grep -qF "NG018" || SA6_OK=1
+check SA6-vitest-adds-ng018 "vitest workspace: NG018 included" "$SA6_OK"
+
+###############################################################################
+echo
+echo "== 1.1.0: skills use the current resource() API =="
+###############################################################################
+
+# Angular v20 renamed resource()'s `request` option to `params` (and the
+# loader argument with it). The skills must not teach the removed shape.
+R4_OK=0
+python3 - "$ROOT" <<'PY' 2>/dev/null || R4_OK=1
+import glob, os, re, sys
+bad = []
+for p in glob.glob(os.path.join(sys.argv[1], "skills", "*", "SKILL.md")):
+    txt = open(p, encoding="utf-8").read()
+    for pat in (r"\brequest:\s*\(\)", r"\(\{\s*request\s*\}\)"):
+        if re.search(pat, txt):
+            bad.append("%s: %s" % (os.path.basename(os.path.dirname(p)), pat))
+assert not bad, bad
+PY
+check R4-resource-params-api "no skill uses resource({ request }) -- it is params since v20" "$R4_OK"
+
+###############################################################################
+echo
+echo "== 1.1.0: false-positive fixes (NG010, NG012, NG016, NG105) =="
+###############################################################################
+
+cd "$V22" || exit 1
+
+# NG010: the chain start is found by walking back at paren depth 0, so an
+# arrow function inside an earlier operator no longer truncates the chain.
+run "$(write_json "$V22/src/app/a.ts" 'export class A {
+  constructor() { this.obs$.pipe(takeUntilDestroyed(), map((x) => x.id)).subscribe((v) => this.v.set(v)); }
+}')" bash "$HOOK_LINT" pre
+expect FP-N010-teardown-before-arrow-op 0 none ""
+
+run "$(write_json "$V22/src/app/a.ts" 'export class A {
+  constructor() { this.obs$.pipe(take(1), filter((x) => { return !!x; })).subscribe(f); }
+}')" bash "$HOOK_LINT" pre
+expect FP-N010-teardown-before-block-arrow 0 none ""
+
+run "$(write_json "$V22/src/app/a.ts" 'export class A {
+  constructor() { this.obs$.pipe(map((x) => x.id)).subscribe(f); }
+}')" bash "$HOOK_LINT" pre
+expect FP-N010-arrow-op-no-teardown-still-fires 2 err "NG010"
+
+# A teardown in an enclosing call does not cover an inner subscribe.
+run "$(write_json "$V22/src/app/a.ts" 'export class A {
+  constructor() { take(this.obs$.subscribe(f)); }
+}')" bash "$HOOK_LINT" pre
+expect FP-N010-enclosing-call-not-teardown 2 err "NG010"
+
+# NG012: signal .set()/.update() take exactly one argument; a two-argument
+# .set() is a Map, HttpParams, HttpHeaders, URLSearchParams or FormData.
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { const p = new HttpParams().set("q", this.q()); this.log(p); });')" bash "$HOOK_LINT" pre
+expect FP-N012-httpparams-set 0 none ""
+
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { this.cache.set(this.id(), { at: Date.now(), v: 1 }); });')" bash "$HOOK_LINT" pre
+expect FP-N012-map-set-two-args 0 none ""
+
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { this.state.set({ a: this.a(), b: this.b() }); });')" bash "$HOOK_LINT" pre
+expect FP-N012-object-arg-still-fires 2 err "NG012"
+
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { this.pair.set([this.a(), this.b()]); });')" bash "$HOOK_LINT" pre
+expect FP-N012-array-arg-still-fires 2 err "NG012"
+
+run "$(write_json "$V22/src/app/a.ts" 'effect(() => { this.label.set(fmt("a, b", this.a())); });')" bash "$HOOK_LINT" pre
+expect FP-N012-comma-in-string-still-fires 2 err "NG012"
+
+# NG016: judge the value, not just the key name.
+ENV="$V22/src/environments/environment.ts"
+run "$(write_json "$ENV" 'export const environment = { storageKey: "app-theme", hotkey: "ctrl+k" };')" bash "$HOOK_LINT" pre
+expect FP-N016-storage-key-name 0 none ""
+
+run "$(write_json "$ENV" 'export const environment = { firebase: { apiKey: "AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY", authDomain: "demo.firebaseapp.com" } };')" bash "$HOOK_LINT" pre
+expect FP-N016-firebase-web-key-public 0 none ""
+
+run "$(write_json "$ENV" 'export const environment = { cacheKeyPrefix: "my-app-user-preferences-v2" };')" bash "$HOOK_LINT" pre
+expect FP-N016-long-readable-value 0 none ""
+
+run "$(write_json "$ENV" 'export const environment = { dbPassword: "hunter2" };')" bash "$HOOK_LINT" pre
+expect FP-N016-password-any-value-fires 2 err "NG016"
+
+run "$(write_json "$ENV" 'export const environment = { githubToken: "ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8" };')" bash "$HOOK_LINT" pre
+expect FP-N016-known-prefix-fires 2 err "NG016"
+
+run "$(write_json "$ENV" 'export const environment = { apiKey: "q8ZtV3mK1xN7pR4wL9sB2dH6fJ0cY5gT" };')" bash "$HOOK_LINT" pre
+expect FP-N016-high-entropy-key-fires 2 err "NG016"
+
+# NG105: an injected DOCUMENT (this.document) is the rule's own fix.
+post_file "$V22/src/app/d.component.ts" 'export class D {
+  private readonly document = inject(DOCUMENT);
+  focus() { this.document.body.classList.add("x"); }
+}'
+expect FP-N105-injected-document 0 none ""
+
+post_file "$V22/src/app/d.component.ts" 'export class D { w() { return window.innerWidth; } }'
+expect FP-N105-global-window-still-fires 2 err "NG105"
 
 cd "$ROOT" || exit 1
 

@@ -1,10 +1,9 @@
 ---
 name: performance-and-zoneless
-description: MANDATORY for zoneless, change detection, and bundle work. Invoke before touching change detection, defer blocks, route loading, or images.
-file_patterns:
+description: MANDATORY for Angular zoneless, change detection, and bundle work. Invoke before touching change detection, defer blocks, route loading, or images.
+paths:
   - "**/*.ts"
   - "**/*.html"
-auto_suggest: true
 ---
 
 # Performance and Zoneless
@@ -112,8 +111,8 @@ export class OrderStatusComponent {
   private readonly orders = inject(OrdersService);
   readonly orderId = input.required<string>();
   readonly status = resource({ // v22+
-    request: () => this.orderId(),
-    loader: ({ request }) => this.orders.watch(request),
+    params: () => this.orderId(),
+    loader: ({ params }) => this.orders.watch(params),
   });
 }
 ```

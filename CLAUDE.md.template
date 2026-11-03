@@ -33,7 +33,8 @@ advisory. Full detail, fix examples, and version gates are in the plugin's `READ
 - Never write a signal from inside `effect()` (NG012) — derived state is `computed()`;
   writable state derived from other signals is `linkedSignal()`.
 - Never call `.subscribe()` without a teardown operator in the chain (NG010) — prefer
-  the `async` pipe, `toSignal()`, or `httpResource()` instead of subscribing at all.
+  the `async` pipe, `toSignal()`, or `httpResource()` instead of subscribing at all; for a
+  one-shot HTTP command, `await firstValueFrom(...)`.
 
 ## TypeScript and security
 

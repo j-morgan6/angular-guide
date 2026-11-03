@@ -480,8 +480,8 @@ check_ng010() {
   is_spec && return 0
   local rc
   # For each .subscribe( call, inspect the chain back to the start of its
-  # statement. A chain carrying takeUntilDestroyed (or an explicit take/first
-  # completion operator) is considered self-terminating.
+  # expression (see chain_start). A chain carrying takeUntilDestroyed (or an
+  # explicit take/first completion operator) is considered self-terminating.
   #
   # The python pass wraps its logic in try/except and only ever exits 0 or 1
   # itself: 1 means "found a bare subscribe", 0 means "clean or the pass
@@ -490,14 +490,35 @@ check_ng010() {
   # and `||` would treat it identically to a crash and swallow every finding.
   python3 - "$CODE_PATH" <<'PY' 2>/dev/null
 import re, sys
+def chain_start(s, end):
+    # Walk back from the `.subscribe` at `end` to the start of its call
+    # chain. Bracket depth is tracked so an arrow function or block inside an
+    # earlier operator (`map((x) => { ... })`) is stepped over instead of
+    # ending the chain; at depth 0 a statement or arrow boundary ends it, and
+    # an unmatched opener means we left an enclosing call's argument list
+    # (`take(obs$.subscribe())`), whose operators do not apply here.
+    depth = 0
+    k = end - 1
+    while k >= 0:
+        c = s[k]
+        if c in ")]}":
+            depth += 1
+        elif c in "([{":
+            if depth == 0:
+                return k + 1
+            depth -= 1
+        elif depth == 0:
+            if c in ";," or (c == ">" and k > 0 and s[k - 1] == "="):
+                return k + 1
+        k -= 1
+    return 0
+
 try:
     src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
     SAFE = ("takeUntilDestroyed", "takeUntil(", "take(", "first(", "firstValueFrom", "lastValueFrom")
     hit = False
     for m in re.finditer(r"\.subscribe\s*\(", src):
-        start = max(src.rfind(";", 0, m.start()), src.rfind("{", 0, m.start()),
-                    src.rfind("}", 0, m.start()), src.rfind("=>", 0, m.start()))
-        chain = src[start + 1:m.start()]
+        chain = src[chain_start(src, m.start()):m.start()]
         if not any(s in chain for s in SAFE):
             hit = True
             break
@@ -549,6 +570,36 @@ def balanced_span(s, open_paren_index):
         k += 1
     return n
 
+def top_level_args(s, open_paren_index):
+    # Number of arguments in the call whose "(" is at open_paren_index:
+    # commas at bracket depth 1, skipping string literals, plus one.
+    depth, k, n = 0, open_paren_index, len(s)
+    commas, nonblank, quote = 0, False, None
+    while k < n:
+        c = s[k]
+        if quote:
+            if c == "\\":
+                k += 1
+            elif c == quote:
+                quote = None
+        elif c in "\"\x27`":
+            quote = c
+            nonblank = True
+        elif c in "([{":
+            depth += 1
+            if depth > 1:
+                nonblank = True
+        elif c in ")]}":
+            depth -= 1
+            if depth == 0:
+                break
+        elif c == "," and depth == 1:
+            commas += 1
+        elif not c.isspace():
+            nonblank = True
+        k += 1
+    return commas + 1 if nonblank else 0
+
 try:
     src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
     hit = False
@@ -572,9 +623,15 @@ try:
             return any(a <= pos < b for a, b in untracked_spans)
 
         for sm in re.finditer(r"\.(set|update)\s*\(", body):
-            if not in_untracked(sm.start()):
-                hit = True
-                break
+            if in_untracked(sm.start()):
+                continue
+            # WritableSignal.set()/.update() take exactly one argument. A
+            # two-argument .set() is a Map, WeakMap, HttpParams, HttpHeaders,
+            # URLSearchParams or FormData -- not a signal write.
+            if top_level_args(body, sm.end() - 1) >= 2:
+                continue
+            hit = True
+            break
         if hit:
             break
     sys.exit(1 if hit else 0)
@@ -584,7 +641,7 @@ PY
   rc=$?
   if [ "$rc" -eq 1 ]; then
     add '🚫 NG012: `effect()` writes a signal.
-   💡 Fix: Effects are for side effects that leave the reactive graph — logging, third-party DOM, analytics. Derived state belongs in `computed()`; writable state derived from other signals belongs in `linkedSignal()`. Writing signals inside an effect creates feedback loops and re-entrant change detection. If you genuinely need to write from inside an effect, wrap that write in `untracked()` — NG012 excludes writes lexically inside an `untracked(...)` callback.
+   💡 Fix: Effects are for side effects that leave the reactive graph — logging, third-party DOM, analytics. Derived state belongs in `computed()`; writable state derived from other signals belongs in `linkedSignal()`. Writing signals inside an effect creates feedback loops and re-entrant change detection. Restructure first; only if the write cannot be expressed as `computed()` or `linkedSignal()` (e.g. resetting unrelated state in response to an event-like signal), isolate it in `untracked()` with a comment saying why.
    See: signals-essentials skill'
   fi
 }
@@ -663,25 +720,55 @@ check_ng016() {
   #     secret-shaped its key name looks.
   # Same fail-open contract as NG010/012/013/007: read the exit code
   # directly, do not gate with `|| return 0`.
+  #   - The key name only says what KIND of value to expect; the value
+  #     decides. The key's last word is the noun (`dbPassword`, `storageKey`;
+  #     not `passwordPolicy`, `tokenEndpoint`). A password/secret/credential
+  #     key flags any non-empty literal. A key/token key flags only a value
+  #     that looks issued: a known secret prefix, or a long, high-entropy
+  #     string -- so `storageKey: "app-theme"` passes. Browser keys that are
+  #     public by design (Firebase/Google `AIza...`, Stripe `pk_...`) pass.
   python3 - "$CODE_PATH" <<'PY' 2>/dev/null
-import re, sys
+import math, re, sys
+from collections import Counter
+
+STRONG = {"password", "passwd", "pwd", "secret", "credential", "credentials"}
+WEAK = {"key", "apikey", "token"}
+SECRET_PREFIXES = ("sk_live_", "sk_test_", "rk_live_", "rk_test_", "sk-", "ghp_", "gho_",
+                   "ghu_", "ghs_", "github_pat_", "glpat-", "xoxb-", "xoxp-", "xoxa-",
+                   "xoxs-", "AKIA", "ASIA", "-----BEGIN")
+PUBLIC_PREFIXES = ("AIza", "pk_live_", "pk_test_")
+
+def last_word(name):
+    words = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", name)
+    return words[-1].lower() if words else ""
+
+def entropy(s):
+    n = len(s)
+    return -sum(c / n * math.log2(c / n) for c in Counter(s).values())
+
+def looks_issued(v):
+    if v.startswith(PUBLIC_PREFIXES):
+        return False
+    if v.startswith(SECRET_PREFIXES):
+        return True
+    return (len(v) >= 20 and " " not in v and re.search(r"\d", v) is not None
+            and re.search(r"[A-Za-z]", v) is not None and entropy(v) >= 4.2)
+
 try:
     src = open(sys.argv[1], encoding="utf-8", errors="ignore").read()
-    pattern = re.compile(
-        r'(?:key|secret|token|password|credential)[A-Za-z]*\s*:\s*(["\'])([^"\']*)\1',
-        re.IGNORECASE,
-    )
+    pattern = re.compile(r'["\']?([A-Za-z_$][\w$-]*)["\']?\s*:\s*(["\'])([^"\']*)\2')
     url_re = re.compile(r'^[A-Za-z][A-Za-z0-9+.\-]*://')
     hit = False
     for line in src.splitlines():
         if "process.env" in line or "import.meta.env" in line:
             continue
         for m in pattern.finditer(line):
-            value = m.group(2)
+            word, value = last_word(m.group(1)), m.group(3)
             if not value or url_re.match(value):
                 continue
-            hit = True
-            break
+            if word in STRONG or (word in WEAK and looks_issued(value)):
+                hit = True
+                break
         if hit:
             break
     sys.exit(1 if hit else 0)
@@ -781,7 +868,9 @@ check_ng105() {
   # comment-stripped content ($CODE_PATH, not the raw file) contains
   # @Component -- so a commented-out decorator cannot trigger this rule.
   printf '%s' "$FILE_PATH" | grep -qE '\.component\.ts$' || grep -q '@Component' "$CODE_PATH" 2>/dev/null || return 0
-  if grep -qE '\b(document|window)\.[a-zA-Z]' "$CODE_PATH" 2>/dev/null; then
+  # The left context excludes a preceding `.`: `this.document.body` is the
+  # injected DOCUMENT token this rule recommends, not the global.
+  if grep -qE '(^|[^.$[:alnum:]_])(document|window)\.[a-zA-Z]' "$CODE_PATH" 2>/dev/null; then
     add '⚠️  NG105: Direct `document` / `window` access in a component.
    💡 Fix: Use `viewChild()` signal queries for element access, `afterRenderEffect()` for DOM work that must run post-render, and inject `DOCUMENT` rather than reaching for the global. Direct globals break SSR, where neither exists.
    See: component-architecture skill'

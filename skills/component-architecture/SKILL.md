@@ -1,10 +1,9 @@
 ---
 name: component-architecture
-description: MANDATORY for ALL component design decisions. Invoke before creating a component or adding logic to an existing one.
-file_patterns:
+description: MANDATORY for ALL Angular component design decisions. Invoke before creating a component or adding logic to an existing one.
+paths:
   - "**/*.component.ts"
   - "**/*.html"
-auto_suggest: true
 ---
 
 # Component Architecture

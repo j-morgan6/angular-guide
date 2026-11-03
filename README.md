@@ -33,9 +33,9 @@ was primed.
 
 This plugin's rules fire on every `Write`, `Edit`, and `Bash` call regardless of which
 skill (if any) the model chose to load, and regardless of whether the call came from the
-main session or a subagent — a `SubagentStart` hook injects the condensed blocking rule
-set (the NG0xx rules) directly into every subagent's context, and the same `PreToolUse`
-hooks still run underneath it.
+main session or a subagent — in an Angular workspace, a `SubagentStart` hook injects the
+condensed blocking rule set (the NG0xx rules this workspace's version enables) directly
+into every subagent's context, and the same `PreToolUse` hooks still run underneath it.
 
 ## Requirements
 
@@ -62,11 +62,11 @@ your global or project Claude Code settings.
 
 ## The 9 skills
 
-Each skill is model-invoked: Claude Code loads it when the file pattern matches and the
-model elects to consult it (`auto_suggest: true` nudges that election, but doesn't force
-it — which is exactly the gap the hooks in this plugin exist to backstop).
+Each skill is model-invoked: its frontmatter `paths` globs limit it to sessions working
+on matching files, and within that the model elects whether to consult it. Nothing forces
+that election — which is exactly the gap the hooks in this plugin exist to backstop.
 
-| Skill | Triggers on | Covers |
+| Skill | `paths` | Covers |
 |---|---|---|
 | `angular-essentials` | any `.ts` / `.html` | Standalone-by-default, no `@NgModule`, native control flow, `inject()`, signal `input()`/`output()`/`model()`, no `any`, native class/style bindings, the `host` object, no `[innerHTML]`/`bypassSecurityTrust*` |
 | `signals-essentials` | any `.ts` | Choosing `computed()` vs. `linkedSignal()` vs. `effect()`; effects never write signals; `resource()` family for async state |
@@ -124,13 +124,13 @@ before matching.
 | NG007 | `any` (as a type annotation, `as any`, or `<any>`) | Use `unknown` and narrow it, or the real type. | none |
 | NG008 | `[ngClass]` / `[ngStyle]` (attribute or property-binding form) | Use `[class.x]`, `[style.x.unit]`, or `[class]="record()"`. | none |
 | NG009 | `@HostBinding` / `@HostListener` decorators | Use the `host` object in `@Component`/`@Directive` metadata. | none |
-| NG010 | `.subscribe()` whose call chain (back to the previous `;`, `{`, `}`, or `=>`) contains none of `takeUntilDestroyed`, `takeUntil(`, `take(`, `first(`, `firstValueFrom`, `lastValueFrom` — matched as plain substrings, and skipped entirely in `.spec.ts`/`.test.ts` files. | Prefer not subscribing — `async` pipe, `toSignal()`, `httpResource()`. When you must, add `.pipe(takeUntilDestroyed(this.destroyRef))`. | none |
+| NG010 | `.subscribe()` whose call chain (walked back at bracket depth 0 to the previous `;`, `,`, `=>`, or unmatched opener, so arrow functions inside earlier operators don't cut it short) contains none of `takeUntilDestroyed`, `takeUntil(`, `take(`, `first(`, `firstValueFrom`, `lastValueFrom` — matched as plain substrings, and skipped entirely in `.spec.ts`/`.test.ts` files. | Prefer not subscribing — `async` pipe, `toSignal()`, `httpResource()`. For a one-shot HTTP command, `await firstValueFrom(...)`. Otherwise add `.pipe(takeUntilDestroyed(this.destroyRef))`. | none |
 | NG011 | `.mutate(` on a signal | Use `.set()` with a new value or `.update()` with a pure transform — the API was removed. | none |
-| NG012 | `effect(...)` whose body (balanced-paren extracted, so it correctly spans nested calls) contains `.set(` or `.update(` | Move derived state to `computed()`; state derived from other signals but independently writable to `linkedSignal()`. | none |
+| NG012 | `effect(...)` whose body (balanced-paren extracted, so it correctly spans nested calls) contains a one-argument `.set(` or `.update(` outside an `untracked(...)` callback — a two-argument `.set(k, v)` is a `Map`/`HttpParams`/`URLSearchParams`, not a signal | Move derived state to `computed()`; state derived from other signals but independently writable to `linkedSignal()`. | none |
 | NG013 | `@for (...)` whose balanced-paren clause contains no `track` — the clause is extracted by counting parens, not by matching to the first `)`, so `@for (x of items(); track x.id)` is correctly **not** flagged despite the inner `items()` call. | Add `track item.id` (or another stable identity). | v20+ |
 | NG014 | `[innerHTML]` / `[outerHTML]` bindings | Interpolate text or compose real components; sanitize server-side if you must render markup. | none |
 | NG015 | Any `bypassSecurityTrust*` call | Sanitize upstream; if a trusted-value case is genuine, isolate it in one reviewed helper. | none |
-| NG016 | A secret-shaped key (`key`/`secret`/`token`/`password`/`credential`, case-insensitive) assigned a string literal in a file under an `environments?/` directory or named `environment*.ts` — skipped if the file instead reads from `process.env`/`import.meta.env`. | Move the secret behind your backend; `environment.ts` compiles into the public browser bundle regardless of when the value was injected. | none |
+| NG016 | In a file under an `environments?/` directory or named `environment*.ts`, a string literal assigned to a key whose last word is `password`/`secret`/`credential` (any non-empty value), or `key`/`token` (only a value that looks issued: a known secret prefix like `sk_live_`/`ghp_`/`AKIA`, or 20+ high-entropy characters). URLs, lines that read `process.env`/`import.meta.env`, and browser keys that are public by design (`AIza…`, Stripe `pk_…`) are skipped — so `storageKey: "app-theme"` passes. | Move the secret behind your backend; `environment.ts` compiles into the public browser bundle regardless of when the value was injected. | none |
 | NG017 | An `import`/`require` of `zone.js` | Remove it — this workspace runs `provideZonelessChangeDetection()`, and zone.js re-introduces monkey-patched async APIs. | only when the cached profile says `zoneless: true` |
 | NG018 | A `jasmine.*` reference in a `.ts` file | Use Vitest equivalents (`vi.fn()`, `vi.spyOn()`, `expect.objectContaining()`) — TestBed itself is unchanged. | only when the cached profile says `test_runner: "vitest"` |
 
@@ -145,7 +145,7 @@ model, but the write already happened — nothing is undone.
 | NG102 | `FormBuilder` / `new FormGroup` / `fb.group(` in a non-spec `.ts` file | Prefer Signal Forms for a *new* form — form state is signals and composes with `computed()` with no `valueChanges` subscription. (Extending an existing Reactive Forms screen is fine; starting a new one isn't.) | only when the cached profile says `signal_forms_available: true` (v22+) |
 | NG103 | `@Injectable({ providedIn: 'root' })` | Use `@Service()` — same root-provided singleton, less ceremony. | only when the cached profile says `service_decorator_available: true` (v22+) |
 | NG104 | A static `<img ... src="...">` with no `NgOptimizedImage` — matched against a **newline-flattened copy of the file**, specifically so a `<img>` tag that Prettier has wrapped across multiple lines is still caught. | Import `NgOptimizedImage` and use `ngSrc` with explicit `width`/`height` (or `fill`). | none |
-| NG105 | Direct `document.`/`window.` access in a file that is a component — the path ends `.component.ts`, **or** its (comment-stripped) content contains `@Component` — skipped entirely in `.spec.ts`/`.test.ts` files. | Use `viewChild()` for elements, `afterRenderEffect()` for post-render DOM work, or inject `DOCUMENT` rather than the global. Direct globals break under SSR. | none |
+| NG105 | Direct `document.`/`window.` access (the globals — `this.document` from `inject(DOCUMENT)` is not flagged) in a file that is a component — the path ends `.component.ts`, **or** its (comment-stripped) content contains `@Component` — skipped entirely in `.spec.ts`/`.test.ts` files. | Use `viewChild()` for elements, `afterRenderEffect()` for post-render DOM work, or inject `DOCUMENT` rather than the global. Direct globals break under SSR. | none |
 | NG106 | Structural complexity in a component file (same `.component.ts`-or-`@Component` test as NG105, run by the standalone `analyze_quality.sh`): an `HttpClient` reference, more than ~200 non-blank lines, or more than ~8 `input()`/`input.required()` declarations — skipped entirely in `.spec.ts`/`.test.ts` files. | Move HTTP into a service; split the component; collapse many scalar inputs into one object input. | none |
 
 ## Version awareness
@@ -239,6 +239,11 @@ recall for being dependency-free and fast. Known false negatives:
   closes the rule's `[^)]*` match at the default value's `)` and leaves the injected
   parameter after it unseen (a documented, deliberate trade-off: a missed detection is
   recoverable in review, a blocked correct write is not).
+- **NG012** tells a signal write from another `.set()` by argument count, so a
+  one-argument `.set(x)` on a non-signal object inside an effect still fires.
+- **NG016** judges `key`/`token` values by shape (known prefixes, length, entropy). A
+  short or low-entropy real secret under a `key`/`token` name is missed; a long random
+  non-secret identifier under one is flagged.
 - **NG103** greps `$CODE_PATH` line-by-line with no multiline flag, so — unlike NG004 —
   it genuinely can miss a `@Injectable({ providedIn: 'root' })` whose braces are split
   across lines in a way that puts `providedIn` on a different line than the pattern

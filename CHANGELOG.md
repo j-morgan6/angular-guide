@@ -2,6 +2,33 @@
 
 All notable changes to `angular-guide` are documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- **Subagent rule injection now works.** `SubagentStart` output was plain stdout, which
+  Claude Code writes to its debug log rather than the subagent's context. It is now JSON
+  `hookSpecificOutput.additionalContext`. It is also only emitted inside an Angular
+  workspace (a cached profile exists), and only includes the rules the workspace's
+  profile enables — a v20 subagent is no longer told OnPush is the default.
+- **Skill scoping now works.** `file_patterns` and `auto_suggest` are not Claude Code
+  skill fields and were ignored; skills now use `paths`. Every skill description names
+  Angular, so the skills are less likely to load in non-Angular TypeScript projects.
+- Skills used `resource()`'s pre-v20 `request` option; they now use `params`.
+- NG010 no longer misses a teardown that precedes an arrow-function operator in the same
+  `pipe()`, and no longer credits an enclosing call's `take(` to an inner `.subscribe()`.
+- NG012 no longer flags two-argument `.set(k, v)` calls (`Map`, `HttpParams`,
+  `URLSearchParams`, `FormData`) inside an effect. Its message no longer suggests
+  `untracked()` as a general way out.
+- NG016 judges the value, not just the key name: `storageKey: "app-theme"`, `hotkey`,
+  Firebase `apiKey` (`AIza…`) and Stripe publishable keys no longer block.
+- NG105 no longer flags `this.document` from `inject(DOCUMENT)` — the rule's own fix.
+
+### Changed
+
+- `data-loading` shows the call-site pattern for HTTP commands
+  (`await firstValueFrom(...)`), which NG010 accepts.
+
 ## 1.0.0 — 2026-09-06
 
 Initial release.
