@@ -19,6 +19,7 @@ stderr, which Claude Code shows to the model. Every unexpected condition
 exits 0 with no output — a plugin defect must never block a write.
 """
 
+import bisect
 import json
 import math
 import os
@@ -229,6 +230,40 @@ class Ctx:
         self.v20 = profile.get("standalone_default") is True
         self.v22 = profile.get("onpush_default") is True
         self.component = (file_path.endswith(".component.ts") or "@Component" in self.code)
+        self.newlines = [i for i, ch in enumerate(raw) if ch == "\n"]
+        self.parse_ignores()
+
+    def line_of(self, offset):
+        return bisect.bisect_left(self.newlines, offset) + 1
+
+    def parse_ignores(self):
+        # angular-guide-ignore-{next-line,line,file} <IDs> -- <reason>
+        # Only honoured inside a real comment: comment stripping blanks
+        # comments in place, so a directive whose span is still non-blank in
+        # `code` sits in a string or in code, not a comment. A directive with
+        # no reason is recorded but not applied.
+        self.ignored_lines, self.ignored_file, self.unreasoned = {}, set(), []
+        for m in re.finditer(r"angular-guide-ignore-(next-line|line|file)\b([^\n]*)", self.raw):
+            if self.code[m.start():m.end()].strip():
+                continue
+            rest = re.sub(r"\s*(-->|\*/).*$", "", m.group(2))
+            ids_part, _, reason = rest.partition("--")
+            ids = {i.upper() for i in re.findall(r"\b(?:NG|BG)\d{3}\b", ids_part, re.I)}
+            line = self.line_of(m.start())
+            target = line + 1 if m.group(1) == "next-line" else line
+            if not reason.strip():
+                self.unreasoned += [(i, line) for i in sorted(ids)]
+            elif m.group(1) == "file":
+                self.ignored_file |= ids
+            else:
+                for i in ids:
+                    self.ignored_lines.setdefault(i, set()).add(target)
+
+    def unignored(self, rule_id, hits):
+        if rule_id in self.ignored_file:
+            return []
+        lines = self.ignored_lines.get(rule_id, ())
+        return [h for h in hits if self.line_of(h) not in lines]
 
 
 PRE, POST = "pre", "post"
@@ -584,9 +619,9 @@ def message_for(rule_id, message, c):
     return message
 
 
-def run_rule(fn, c):
+def run_rule(rule_id, fn, c):
     try:
-        return fn(c)
+        return c.unignored(rule_id, fn(c))
     except Exception:
         return []
 
@@ -636,21 +671,26 @@ def lint(mode, payload):
         return []
     after_ctx = Ctx(file_path, after, profile)
     before_ctx = Ctx(file_path, before, profile) if before else None
+    disabled = ag_profile.disabled_rules()
 
     findings = []
     for rule_id, rule_mode, fn, message in RULES:
-        if rule_mode != mode:
+        if rule_mode != mode or rule_id in disabled:
             continue
-        hits = run_rule(fn, after_ctx)
+        hits = run_rule(rule_id, fn, after_ctx)
         if not hits:
             continue
-        had = len(run_rule(fn, before_ctx)) if before_ctx else 0
+        had = len(run_rule(rule_id, fn, before_ctx)) if before_ctx else 0
         if len(hits) <= had:
             continue
         text = message_for(rule_id, message, after_ctx)
         if had:
             text += ("\n   ℹ️  This file already had %d of these; this change adds %d. "
                      "Only the new ones block." % (had, len(hits) - had))
+        for ignored_id, line in after_ctx.unreasoned:
+            if ignored_id == rule_id:
+                text += ("\n   ℹ️  The angular-guide-ignore comment for %s on line %d has no "
+                         "`-- reason`, so it was not applied." % (rule_id, line))
         findings.append(text)
     return findings
 

@@ -216,28 +216,52 @@ the drift checks described above (`R2`, and its sibling `S2`/`S3` that keep skil
 
 ## Tuning
 
-To disable a rule, edit `hooks/hooks.json` directly — there's no separate config file or
-settings key to touch. The simplest disable is to remove or comment out the whole
-`PreToolUse`/`PostToolUse` entry for the mode you don't want.
+Don't edit the plugin's files to change its behaviour: an installed plugin lives in
+`~/.claude/plugins/cache/`, and an update replaces that copy.
 
-To disable a single rule instead:
+### Turn a rule off everywhere
 
-- In `scripts/hook-lint.sh`, each rule is its own `check_ngNNN()` function called from the
-  driver list at the bottom of the file — either wrap the function body in `return 0` or
-  delete its call from that list.
-- In `scripts/bash-guard.sh`, there is no per-rule function and no driver list — each
-  BGNNN rule is a standalone inline `if`/`case` block that calls `add` directly. To
-  disable one, comment out or remove that block itself (it's marked with a `# BG00N —`
-  comment immediately above it).
+- **Just for you:** run `/plugin configure angular-guide@angular-guide` and list the IDs
+  under **Disabled rules**, e.g. `NG007, NG010, BG001`.
+- **For everyone on a project:** set `ANGULAR_GUIDE_DISABLED_RULES` in the project's
+  committed `.claude/settings.json`:
 
-**NG010 is the likeliest source of false positives.** A long-lived root-service
-subscription that's meant to live for the app's whole lifetime (a global event bus, a
-websocket connection manager) has no natural point to call `takeUntilDestroyed()` against
-— `DestroyRef` for a root-provided singleton is the app itself, so the "leak" NG010 flags
-is often intentional. If that's your case, either wrap the subscription in a documented
-`// eslint-disable`-style comment above it (NG010 doesn't inspect comments as approval,
-but it signals intent to reviewers) or accept the rule firing there and note why in code
-review.
+  ```json
+  { "env": { "ANGULAR_GUIDE_DISABLED_RULES": "NG010, NG102" } }
+  ```
+
+Both take NG and BG IDs, separated by commas or spaces, in any case, and the two lists
+add together. A disabled rule never blocks or warns, and is left out of the rules given
+to subagents.
+
+### Ignore one spot
+
+Put a directive in a comment, naming the rule IDs and a reason after `--`:
+
+```ts
+// angular-guide-ignore-next-line NG010 -- app-lifetime websocket, torn down with the app
+this.socket$.subscribe((m) => this.dispatch(m));
+
+const raw: any = legacyLib(); // angular-guide-ignore-line NG007 -- untyped third-party API
+```
+
+```html
+<!-- angular-guide-ignore-file NG003 -- legacy screen, replaced in the Q3 redesign -->
+```
+
+- `-next-line` covers the line after the comment, `-line` the comment's own line, and
+  `-file` the whole file. A match counts as being on the line where it starts — for
+  NG010 the `.subscribe(` line, for NG012 the `.set(`/`.update(` line.
+- It only works inside a real comment (`//`, `/* */`, `<!-- -->`), never in a string.
+- **The reason is required.** A directive without `-- reason` is not applied, and the
+  finding says so. The reason is for whoever reviews the code.
+- The block messages don't mention this syntax, so the model isn't steered toward it.
+  Review new ignore comments the way you would an `eslint-disable`.
+
+**NG010 is the likeliest rule to need one.** A root-service subscription meant to live
+for the app's whole lifetime (a global event bus, a websocket manager) has no natural
+point to call `takeUntilDestroyed()` against, so the "leak" NG010 flags is often
+intentional there.
 
 ## Known limitations
 

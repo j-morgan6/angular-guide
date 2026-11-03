@@ -122,8 +122,9 @@ def current_branch(git_dir):
 
 
 findings = []
+disabled = ag_profile.disabled_rules()
 def add(msg):
-    if msg not in findings:
+    if re.search(r"BG\d{3}", msg).group(0) not in disabled and msg not in findings:
         findings.append(msg)
 
 

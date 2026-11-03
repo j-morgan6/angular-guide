@@ -35,6 +35,19 @@ INPUTS = ("package.json", "angular.json", "tsconfig.json", "package-lock.json",
           "pnpm-lock.yaml", "yarn.lock", "bun.lock")
 
 
+def disabled_rules():
+    """Rule IDs turned off by the user or the project.
+
+    CLAUDE_PLUGIN_OPTION_DISABLED_RULES carries the plugin's `disabled_rules`
+    userConfig option (per user); ANGULAR_GUIDE_DISABLED_RULES can be set in
+    a project's committed .claude/settings.json `env` (per team). Either is
+    a comma- or space-separated list of IDs, case-insensitive.
+    """
+    raw = " ".join(os.environ.get(k, "") for k in
+                   ("CLAUDE_PLUGIN_OPTION_DISABLED_RULES", "ANGULAR_GUIDE_DISABLED_RULES"))
+    return {r.upper() for r in re.findall(r"\b(?:ng|bg)\d{3}\b", raw, re.I)}
+
+
 def data_dir():
     d = os.environ.get("CLAUDE_PLUGIN_DATA")
     if d:

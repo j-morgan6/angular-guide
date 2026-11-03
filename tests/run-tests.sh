@@ -1761,6 +1761,91 @@ cd "$ROOT" || exit 1
 
 ###############################################################################
 echo
+echo "== 2b: turning rules off -- settings and inline ignore comments =="
+###############################################################################
+
+cd "$V22" || exit 1
+
+# Per user: the plugin's userConfig option reaches hooks as
+# CLAUDE_PLUGIN_OPTION_DISABLED_RULES.
+run "$(write_json "$V22/src/app/a.ts" 'const x: any = 1;')" env CLAUDE_PLUGIN_OPTION_DISABLED_RULES="NG007" bash "$HOOK_LINT" pre
+expect OFF-user-option-disables-rule 0 none ""
+run "$(write_json "$V22/src/app/a.ts" 'export class A { @Input() x = 1; }')" env CLAUDE_PLUGIN_OPTION_DISABLED_RULES="NG007" bash "$HOOK_LINT" pre
+expect OFF-other-rules-still-run 2 err "NG005"
+
+# Per project: ANGULAR_GUIDE_DISABLED_RULES (committable via .claude/settings.json
+# `env`). Case and separators are forgiving; BG rules work too.
+run "$(write_json "$V22/src/app/a.ts" 'const x: any = 1;')" env ANGULAR_GUIDE_DISABLED_RULES="ng007, bg002" bash "$HOOK_LINT" pre
+expect OFF-project-env-disables-ng 0 none ""
+run "$(bash_json 'ng build --prod')" env ANGULAR_GUIDE_DISABLED_RULES="ng007, bg002" bash "$BASH_GUARD"
+expect OFF-project-env-disables-bg 0 none ""
+
+# Subagents are not told about rules that are off.
+cd "$V22" || exit 1
+run '{"hook_event_name":"SubagentStart"}' env ANGULAR_GUIDE_DISABLED_RULES="NG012" bash "$SUBAGENT"
+OFF5_OK=0
+printf '%s' "$OUT" | grep -qF "NG011" || OFF5_OK=1
+printf '%s' "$OUT" | grep -qF "NG012" && OFF5_OK=1
+check OFF-subagent-omits-disabled "disabled rule left out of the subagent rules" "$OFF5_OK"
+
+# Inline: angular-guide-ignore-next-line <IDs> -- <reason>
+run "$(write_json "$V22/src/app/bus.service.ts" 'export class Bus {
+  constructor() {
+    // angular-guide-ignore-next-line NG010 -- app-lifetime websocket, never torn down
+    this.socket$.subscribe((m) => this.dispatch(m));
+  }
+}')" bash "$HOOK_LINT" pre
+expect IGN-next-line 0 none ""
+
+# Without a reason the directive is not applied, and the finding says why.
+run "$(write_json "$V22/src/app/bus.service.ts" 'export class Bus {
+  constructor() {
+    // angular-guide-ignore-next-line NG010
+    this.socket$.subscribe((m) => this.dispatch(m));
+  }
+}')" bash "$HOOK_LINT" pre
+expect IGN-needs-reason 2 err "NG010"
+IGN2_OK=0
+printf '%s' "$ERR" | grep -qF -- "-- reason" || IGN2_OK=1
+check IGN-reason-explained "finding explains the ignore was not applied for lack of a reason" "$IGN2_OK"
+
+# It only covers the rules it names.
+run "$(write_json "$V22/src/app/bus.service.ts" '// angular-guide-ignore-next-line NG010 -- legacy
+const x: any = this.a$.subscribe();')" bash "$HOOK_LINT" pre
+expect IGN-other-rule-on-line-still-fires 2 err "NG007"
+
+# angular-guide-ignore-line, as a trailing comment.
+run "$(write_json "$V22/src/app/a.ts" 'const x: any = lib(); // angular-guide-ignore-line NG007 -- untyped third-party API')" bash "$HOOK_LINT" pre
+expect IGN-same-line 0 none ""
+
+# angular-guide-ignore-file, in an HTML comment.
+run "$(write_json "$V22/src/app/old.html" '<!-- angular-guide-ignore-file NG003 -- legacy screen, being replaced -->
+<div *ngIf="a">a</div>
+<div *ngIf="b">b</div>')" bash "$HOOK_LINT" pre
+expect IGN-file-html 0 none ""
+
+# A directive inside a string literal is not a comment and does nothing.
+run "$(write_json "$V22/src/app/a.ts" 'const s = "angular-guide-ignore-file NG007 -- nope"; const y: any = 1;')" bash "$HOOK_LINT" pre
+expect IGN-string-is-not-a-comment 2 err "NG007"
+
+# Advisory rules honour it too.
+post_file "$V22/src/app/sprite.component.html" '<!-- angular-guide-ignore-next-line NG104 -- inline SVG sprite, not a photo -->
+<img src="/assets/sprite.svg" alt="">'
+expect IGN-post-rule 0 none ""
+
+# The userConfig option is declared in the manifest.
+OFF6_OK=0
+python3 -I -c '
+import json, sys
+o = json.load(open(sys.argv[1]))["userConfig"]["disabled_rules"]
+assert o["type"] == "string" and o["title"] and o["description"]
+' "$ROOT/.claude-plugin/plugin.json" 2>/dev/null || OFF6_OK=1
+check OFF-userconfig-declared "plugin.json declares userConfig.disabled_rules" "$OFF6_OK"
+
+cd "$ROOT" || exit 1
+
+###############################################################################
+echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || { printf '  - %s\n' "${FAILED_NAMES[@]}"; exit 1; }
 exit 0

@@ -78,8 +78,10 @@ out = [
     "You are working in an Angular %s workspace. These are enforced by hooks;" % version,
     "violating them blocks your write.",
 ]
+disabled = ag_profile.disabled_rules()
 for title, rules in sections:
-    lines = [line for include, line in rules if include]
+    lines = [line for include, line in rules
+             if include and line.split()[1] not in disabled]
     if lines:
         out += ["", "### " + title] + lines
 out += [

@@ -28,6 +28,15 @@ All notable changes to `angular-guide` are documented in this file.
   repository containing `json.py`, `tempfile.py` or `datetime.py` had that file executed
   by every hook, SessionStart included.
 
+### Added
+
+- **Turning rules off without editing the plugin.** A `disabled_rules` option
+  (`/plugin configure`) for each user, and an `ANGULAR_GUIDE_DISABLED_RULES` variable a
+  team can commit in `.claude/settings.json`. Both cover NG and BG rules, and disabled
+  rules are left out of the subagent rules.
+- **Inline ignore comments:** `angular-guide-ignore-next-line`, `-line` and `-file`,
+  naming rule IDs and a required `-- reason`. Only honoured inside a real comment.
+
 ### Changed
 
 - **The workspace profile no longer lives in your repository.** It is cached under

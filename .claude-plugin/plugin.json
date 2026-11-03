@@ -9,5 +9,14 @@
   "homepage": "https://github.com/j-morgan6/angular-guide",
   "repository": "https://github.com/j-morgan6/angular-guide",
   "license": "MIT",
-  "keywords": ["angular", "signals", "zoneless", "typescript", "best-practices"]
+  "keywords": ["angular", "signals", "zoneless", "typescript", "best-practices"],
+  "userConfig": {
+    "disabled_rules": {
+      "type": "string",
+      "title": "Disabled rules",
+      "description": "Rule IDs to turn off, separated by commas (e.g. NG007, NG010, BG001). Leave empty to run every rule.",
+      "default": "",
+      "required": false
+    }
+  }
 }
